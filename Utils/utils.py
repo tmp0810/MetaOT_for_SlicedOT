@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from torchattacks.attack import Attack
 import numpy as np
 import matplotlib.pyplot as plt
 import os
