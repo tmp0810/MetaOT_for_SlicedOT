@@ -290,8 +290,38 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
     def _evaluate(self, dataloader_test, alpha: np.ndarray, beta: np.ndarray):
         """Compute transport plans, report RMSE in potentials, and save geodesics."""
-        from Solvers.OT_Discrete import interp
+        
         from Utils import utils
+
+        def interp(P, num_inter, batch_size, img_size):
+            P_flatten = P.flatten()
+            grid = []
+            for i in np.linspace(1, 0, num = img_size):
+                for j in np.linspace(0, 1, num = img_size):
+                    grid.append([j, i])
+            x_grid = np.array(grid)
+            y_grid = np.array(grid)
+        
+            def get_hist(t, P_flat):
+                map_samples = np.random.choice(range(len(P_flat)), size = batch_size, p = P_flat)
+                a_samples = x_grid[map_samples // img_size**2]
+                b_samples = y_grid[map_samples % img_size**2]
+                proj_samples = (1.-t)*a_samples + t*b_samples
+                hist, _, _ = np.histogram2d(proj_samples[:,1], proj_samples[:,0], bins = np.linspace(0., 1., num = img_size + 1))
+        
+                hist = np.flipud(hist)
+                thresh = np.quantile(hist, 0.9)
+                hist[hist > thresh] = thresh
+                hist = hist / hist.max()
+                return hist
+        
+            hists = []
+            ts = np.linspace(0, 1, num = num_inter)
+        
+            for i, t in enumerate(ts):
+                hist = get_hist(t, P_flatten)
+                hists.append(hist)
+            return hists
 
         # Grab a small test batch
         for _, _, xs_a, xs_b in dataloader_test:
