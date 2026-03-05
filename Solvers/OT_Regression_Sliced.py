@@ -75,28 +75,50 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
     def _solve_entropic_ot(self, a: np.ndarray, b: np.ndarray):
         """
-        Run Sinkhorn on the full 2-D problem.
+        Sinkhorn algorithm in log-space — Algorithm 1 from the paper.
+
+        Iterates exactly as written:
+            g_i = eps*log(b) - eps*log( K^T exp{f_{i-1}/eps} )
+            f_i = eps*log(a) - eps*log( K   exp{g_i    /eps} )
+
+        Returns f_N, g_N directly — no POT dependency, no log-key issues.
 
         Returns
         -------
-        f : (n,) float64  — source potential   (ε·log u)
-        g : (n,) float64  — target potential   (ε·log v)
+        f : (n,) source Kantorovich potential
+        g : (n,) target Kantorovich potential
         """
         eps = self.cfg_m.epsilon
-        _, log = ot.sinkhorn(
-            a, b, self.C,
-            reg=eps,
-            log=True,
-            numItermax=2000,
-            stopThr=1e-9,
-            warn=False,
-        )
-        # Sinkhorn scaling vectors: T = diag(u) K diag(v), K = exp(-C/ε)
-        # Kantorovich potentials: f = ε log u, g = ε log v
-        f = eps * np.log(np.maximum(log["u"], 1e-300))
-        g = eps * np.log(np.maximum(log["v"], 1e-300))
-        return f, g
 
+        # Clamp weights to avoid log(0)
+        a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
+        b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
+
+        log_a = np.log(a_safe)   # (n,)
+        log_b = np.log(b_safe)   # (n,)
+        log_K = -self.C / eps    # (n, n) — log Gibbs kernel
+
+        def lse(X, axis):
+            """Numerically stable log-sum-exp."""
+            m = X.max(axis=axis, keepdims=True)
+            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+
+        # Initialise f = 0 (Algorithm 1 sets f_0 = 0)
+        f = np.zeros_like(a_safe)
+
+        for _ in range(self.cfg_m.sinkhorn_iters):
+            # g = eps*log(b) - eps*lse_j( log_K[i,j] + f[j]/eps )
+            #   K^T means we sum over rows (axis=0) for each column j
+            g = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
+            # f = eps*log(a) - eps*lse_j( log_K[i,j] + g[j]/eps )
+            f = eps * (log_a - lse(log_K + g[None, :] / eps, axis=1))
+
+        if f.std() < 1e-8:
+            raise RuntimeError(
+                f"f_gt is constant (std={f.std():.2e}). "
+                f"Check epsilon={eps} and that a/b are valid histograms."
+            )
+        return f, g
     # ------------------------------------------------------------------
     # Steps 3-4: 1-D OT potentials along one projection direction
     # ------------------------------------------------------------------
@@ -123,13 +145,11 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
         Returns
         -------
-        f1d : (n,) float — 1-D source potential in **original** grid ordering
-        g1d : (n,) float — 1-D target potential in **original** grid ordering
+        f1d : (n,) float — 1-D source potential in original grid ordering
+        g1d : (n,) float — 1-D target potential in original grid ordering
         """
-        # solve_1D_ot_unsorted handles sorting internally and maps back
         f1d, g1d, _ = solve_1D_ot_unsorted(a, b, proj_positions, proj_positions, p=p)
         return f1d, g1d
-
     # ------------------------------------------------------------------
     # Step 5: Feature matrix for a single pair
     # ------------------------------------------------------------------
@@ -196,6 +216,13 @@ class OT_Regression_Sliced(Defense_Train_Base):
                 # --- sliced-OT feature matrices ---
                 Xf, Xg = self._compute_features(a, b)
 
+                # NEW: SPATIAL MEAN-CENTERING (Khử nhiễu hằng số)
+                # ==========================================
+                f_gt = f_gt - np.mean(f_gt)
+                g_gt = g_gt - np.mean(g_gt)
+                Xf = Xf - np.mean(Xf, axis=0, keepdims=True)
+                Xg = Xg - np.mean(Xg, axis=0, keepdims=True)
+
                 Phi_f_list.append(Xf)    # (n, L)
                 Phi_g_list.append(Xg)
                 y_f_list.append(f_gt)    # (n,)
@@ -226,12 +253,28 @@ class OT_Regression_Sliced(Defense_Train_Base):
         y_f   = np.concatenate(y_f_list)     # (count * n,)
         y_g   = np.concatenate(y_g_list)
 
+        # Normalise each feature column to unit std so that regression
+        # coefficients are comparable across projection directions.
+        # Save scale factors to apply the same normalisation at test time.
+        self.Xf_col_scale = np.std(Phi_f, axis=0).clip(1e-12)
+        self.Xg_col_scale = np.std(Phi_g, axis=0).clip(1e-12)
+        Phi_f = Phi_f / self.Xf_col_scale[None, :]
+        Phi_g = Phi_g / self.Xg_col_scale[None, :]
+
         self.logger.info(
             f"[Fit] Phi_f shape: {Phi_f.shape} → solving simplex LS for α …"
+        )
+        self.logger.info(
+            f"[Fit] y_f range: [{y_f.min():.4f}, {y_f.max():.4f}] | "
+            f"Phi_f range: [{Phi_f.min():.4f}, {Phi_f.max():.4f}]"
         )
         alpha = optimal_alpha_simplex(Phi_f, y_f, ridge=self.cfg_m.ridge)
 
         self.logger.info("[Fit] Solving simplex LS for β …")
+        self.logger.info(
+            f"[Fit] y_g range: [{y_g.min():.4f}, {y_g.max():.4f}] | "
+            f"Phi_g range: [{Phi_g.min():.4f}, {Phi_g.max():.4f}]"
+        )
         beta  = optimal_alpha_simplex(Phi_g, y_g, ridge=self.cfg_m.ridge)
 
         self.logger.info(
@@ -268,6 +311,18 @@ class OT_Regression_Sliced(Defense_Train_Base):
         ĝ(x_k) = Σ_l β_l · g_{θ_l}(P_{θ_l}(x_k))
         """
         Xf, Xg = self._compute_features(a, b)
+
+        # ==========================================
+        # ĐỒNG BỘ CENTERING (Nếu bạn đã dùng ở _fit)
+        # ==========================================
+        Xf = Xf - np.mean(Xf, axis=0, keepdims=True)
+        Xg = Xg - np.mean(Xg, axis=0, keepdims=True)
+
+        # Apply the same column normalisation used during fitting
+        if hasattr(self, "Xf_col_scale"):
+            Xf = Xf / self.Xf_col_scale[None, :]
+            Xg = Xg / self.Xg_col_scale[None, :]
+
         f_pred = Xf @ alpha    # (n,)
         g_pred = Xg @ beta     # (n,)
         return f_pred, g_pred
@@ -276,13 +331,73 @@ class OT_Regression_Sliced(Defense_Train_Base):
         """
         Recover the (regularised) transport plan from Kantorovich potentials.
 
-        P_{ij} = exp(f_i / ε) · K_{ij} · exp(g_j / ε)
-        where K = exp(-C / ε)  is the Gibbs kernel.
+        P_{ij} = exp((f_i + g_j - C_ij) / eps)  (up to normalisation).
+
+        Notes
+        -----
+        - Potentials are centred before exponentiation to prevent overflow.
+          The dual (f, g) has a free additive constant: (f+c, g-c) leaves
+          the plan invariant up to a global scalar, so subtracting means is safe.
+        - The plan is clipped and normalised to sum=1 so it can be used
+          directly as a probability distribution in np.random.choice.
         """
         eps = self.cfg_m.epsilon
-        K = np.exp(-self.C / eps)          # (n, n)
-        P = np.exp(f[:, None] / eps) * K * np.exp(g[None, :] / eps)
+
+        # Centre potentials to prevent exp overflow / underflow
+        f_c = f - f.mean()
+        g_c = g - g.mean()
+
+        # Compute log-plan then shift by max for numerical stability
+        log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
+        log_P -= log_P.max()
+        P = np.exp(log_P)
+
+        # Clip tiny negatives from floating-point noise, normalise to sum=1
+        P = np.clip(P, 0.0, None)
+        P_sum = P.sum()
+        if P_sum > 0:
+            P /= P_sum
         return P
+
+    # ------------------------------------------------------------------
+    # Geodesic interpolation (moved from OT_Discrete)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def interp(P, num_inter, batch_size, img_size):
+        P_flatten = P.flatten()
+        grid = []
+        for i in np.linspace(1, 0, num=img_size):
+            for j in np.linspace(0, 1, num=img_size):
+                grid.append([j, i])
+        x_grid = np.array(grid)
+        y_grid = np.array(grid)
+
+        n_pixels = img_size * img_size   # n = 784 for img_size=28
+        def get_hist(t, P_flat):
+            map_samples = np.random.choice(range(len(P_flat)), size=batch_size, p=P_flat)
+            # P has shape (n_pixels, n_pixels), flat index = i * n_pixels + j
+            a_samples = x_grid[map_samples // n_pixels]   # source pixel index i
+            b_samples = y_grid[map_samples % n_pixels]    # target pixel index j
+            proj_samples = (1.0 - t) * a_samples + t * b_samples
+            hist, _, _ = np.histogram2d(
+                proj_samples[:, 1], proj_samples[:, 0],
+                bins=np.linspace(0.0, 1.0, num=img_size + 1),
+            )
+            hist = np.flipud(hist)
+            # Only clip if there are actually non-zero entries above the threshold.
+            # Using quantile on a sparse hist (many zeros) gives thresh=0
+            # which wipes everything → white image.
+            nonzero = hist[hist > 0]
+            if len(nonzero) > 0:
+                thresh = np.quantile(nonzero, 0.9)  # 90th pctile of NON-ZERO bins only
+                if thresh > 0:
+                    hist = np.clip(hist, 0, thresh)
+            if hist.max() > 0:
+                hist = hist / hist.max()
+            return hist
+
+        return [get_hist(t, P_flatten) for t in np.linspace(0, 1, num=num_inter)]
 
     # ------------------------------------------------------------------
     # Evaluation & visualisation (mirrors OT_Discrete.OT_D_test)
@@ -290,38 +405,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
     def _evaluate(self, dataloader_test, alpha: np.ndarray, beta: np.ndarray):
         """Compute transport plans, report RMSE in potentials, and save geodesics."""
-        
         from Utils import utils
-
-        def interp(P, num_inter, batch_size, img_size):
-            P_flatten = P.flatten()
-            grid = []
-            for i in np.linspace(1, 0, num = img_size):
-                for j in np.linspace(0, 1, num = img_size):
-                    grid.append([j, i])
-            x_grid = np.array(grid)
-            y_grid = np.array(grid)
-        
-            def get_hist(t, P_flat):
-                map_samples = np.random.choice(range(len(P_flat)), size = batch_size, p = P_flat)
-                a_samples = x_grid[map_samples // img_size**2]
-                b_samples = y_grid[map_samples % img_size**2]
-                proj_samples = (1.-t)*a_samples + t*b_samples
-                hist, _, _ = np.histogram2d(proj_samples[:,1], proj_samples[:,0], bins = np.linspace(0., 1., num = img_size + 1))
-        
-                hist = np.flipud(hist)
-                thresh = np.quantile(hist, 0.9)
-                hist[hist > thresh] = thresh
-                hist = hist / hist.max()
-                return hist
-        
-            hists = []
-            ts = np.linspace(0, 1, num = num_inter)
-        
-            for i, t in enumerate(ts):
-                hist = get_hist(t, P_flatten)
-                hists.append(hist)
-            return hists
 
         # Grab a small test batch
         for _, _, xs_a, xs_b in dataloader_test:
@@ -342,9 +426,19 @@ class OT_Regression_Sliced(Defense_Train_Base):
             f_pred, g_pred = self._predict_potentials(a, b, alpha, beta)
             P_pred          = self._potentials_to_plan(f_pred, g_pred)
 
+            # Normm
+            f_pred_c = f_pred - f_pred.mean()
+            f_gt_c   = f_gt - f_gt.mean()
+            g_pred_c = g_pred - g_pred.mean()
+            g_gt_c   = g_gt - g_gt.mean()
             # Potential RMSE
-            rmse_f = float(np.sqrt(np.mean((f_pred - f_gt) ** 2)))
-            rmse_g = float(np.sqrt(np.mean((g_pred - g_gt) ** 2)))
+            # rmse_f = float(np.sqrt(np.mean((f_pred - f_gt) ** 2)))
+            # rmse_g = float(np.sqrt(np.mean((g_pred - g_gt) ** 2)))
+
+            # Potential RMSE (on centered potentials — apples-to-apples)
+            rmse_f = float(np.sqrt(np.mean((f_pred_c - f_gt_c) ** 2)))
+            rmse_g = float(np.sqrt(np.mean((g_pred_c - g_gt_c) ** 2)))
+
             msg = (
                 f"[Eval {idx}]  RMSE_f={rmse_f:.6f}  RMSE_g={rmse_g:.6f} | "
                 f"plan_sum_gt={P_gt.sum():.4f}  plan_sum_pred={P_pred.sum():.4f}"
@@ -352,9 +446,10 @@ class OT_Regression_Sliced(Defense_Train_Base):
             print(msg)
             self.logger.info(msg)
 
-            # Geodesic interpolation images
-            imgs_gt   = interp(P_gt,   num_inter=11, batch_size=50_000, img_size=img_size)
-            imgs_pred = interp(P_pred, num_inter=11, batch_size=50_000, img_size=img_size)
+            # Geodesic interpolation images — call via class, not self, to avoid
+            # Python treating P as a positional arg for the first parameter
+            imgs_gt   = OT_Regression_Sliced.interp(P_gt,   num_inter=11, batch_size=50_000, img_size=img_size)
+            imgs_pred = OT_Regression_Sliced.interp(P_pred, num_inter=11, batch_size=50_000, img_size=img_size)
 
             utils.save_r(
                 imgs_gt,
