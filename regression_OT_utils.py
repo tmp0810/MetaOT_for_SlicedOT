@@ -136,7 +136,7 @@ def solve_1D_ot(a, b, x, y, p):
     for k in range(q - 1):
         i = I[k]
         j = J[k]
-        if (a1[i] < b1[j]) and (i < n - 1):
+        if (a1[i] <= b1[j]) and (i < n - 1):
             I[k + 1] = i + 1
             J[k + 1] = j
             f[i + 1] = np.abs(x[i + 1] - y[j]) ** p - g[j]
