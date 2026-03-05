@@ -21,7 +21,6 @@
 
 import sys
 import os
-from Solvers.OT_Discrete import OT_Discrete
 from Solvers.OT_Regression_Sliced import OT_Regression_Sliced   # ← new solver
 import torch as torch
 import numpy as np
