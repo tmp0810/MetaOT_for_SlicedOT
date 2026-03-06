@@ -37,6 +37,6 @@ def init_cfg(n_solver):
         cfg_m.insert("batch_size", 64)        # dataloader batch size
         cfg_m.insert("valid_rate", 0.0)       # no validation split needed
         cfg_m.insert("log_interval", 1)       # not used (no epochs)
-        cfg_m.insert("sinkhorn_iters", 500)  # Algorithm 1 iterations
+        cfg_m.insert("sinkhorn_iters", 1000)  # Algorithm 1 iterations
 
     return cfg_m
