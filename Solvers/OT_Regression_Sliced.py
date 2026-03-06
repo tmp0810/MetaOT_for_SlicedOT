@@ -295,6 +295,9 @@ class OT_Regression_Sliced(Defense_Train_Base):
         )
         beta  = optimal_alpha_simplex(Phi_g, y_g, ridge=self.cfg_m.ridge)
 
+        alpha = alpha / self.Xf_col_scale
+        beta  = beta  / self.Xg_col_scale
+
         self.logger.info(
             f"[Fit] α: min={alpha.min():.4f}, max={alpha.max():.4f}, "
             f"nnz={np.sum(alpha > 1e-6)}/{len(alpha)}"
@@ -303,6 +306,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
             f"[Fit] β: min={beta.min():.4f},  max={beta.max():.4f}, "
             f"nnz={np.sum(beta  > 1e-6)}/{len(beta)}"
         )
+
 
         # Persist coefficients
         np.save(os.path.join(self.log_sub_folder, "alpha.npy"), alpha)
@@ -338,9 +342,10 @@ class OT_Regression_Sliced(Defense_Train_Base):
         Xg = Xg - np.mean(Xg, axis=0, keepdims=True)
 
         # Apply the same column normalisation used during fitting
-        if hasattr(self, "Xf_col_scale"):
-            Xf = Xf / self.Xf_col_scale[None, :]
-            Xg = Xg / self.Xg_col_scale[None, :]
+        # if hasattr(self, "Xf_col_scale"):
+        #     Xf = Xf / self.Xf_col_scale[None, :]
+        #     Xg = Xg / self.Xg_col_scale[None, :]
+        # Đã chia alpha, beta ở trên nên giờ không cần nữa
 
         f_pred = Xf @ alpha    # (n,)
         g_pred = Xg @ beta     # (n,)
