@@ -183,69 +183,87 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
     def _fit(self, dataloader_train):
         """
-        Collect M bootstrap pairs, build feature matrices and targets,
-        then solve the simplex-constrained least-squares problems.
+        Sample M0 individual images, form all M0*(M0-1)/2 ordered pairs,
+        then solve the regression for α and β.
+
+        This follows the paper's protocol:
+            "M0 samples drawn from the training set, yielding
+             M = M0*(M0-1)/2 pairs used to estimate the RG coefficient."
 
         Returns
         -------
         alpha : (L,) — regression weights for f
         beta  : (L,) — regression weights for g
         """
-        M = self.cfg_m.num_bootstrap
-        self.logger.info(f"[Fit] Collecting M={M} bootstrap pairs …")
+        M0 = self.cfg_m.num_samples
+        M  = M0 * (M0 - 1) // 2
+        self.logger.info(
+            f"[Fit] Collecting M0={M0} images → M={M} pairs …"
+        )
+
+        # ── Step 1: collect M0 individual histograms ──────────────────────
+        # Pull from both x_a and x_b to maximise diversity of distributions.
+        images = []
+        for _, _, x_a, x_b in dataloader_train:
+            for img in x_a.numpy():
+                images.append(img)
+                if len(images) >= M0:
+                    break
+            if len(images) < M0:
+                for img in x_b.numpy():
+                    images.append(img)
+                    if len(images) >= M0:
+                        break
+            if len(images) >= M0:
+                break
+
+        if len(images) < M0:
+            self.logger.warning(
+                f"Only {len(images)} images available (requested M0={M0}). "
+                "Reduce num_samples or increase dataset size."
+            )
+            M0 = len(images)
+            M  = M0 * (M0 - 1) // 2
+
+        self.logger.info(f"[Fit] Collected {M0} images → {M} pairs")
+
+        # ── Step 2: enumerate all (i, j) pairs with i < j ─────────────────
+        pairs = [(i, j) for i in range(M0) for j in range(i + 1, M0)]
 
         Phi_f_list, Phi_g_list = [], []
         y_f_list,   y_g_list   = [], []
-        count = 0
 
-        pbar = tqdm(total=M, desc="Bootstrap pairs")
-        for _, _, x_a, x_b in dataloader_train:
-            x_a_np = x_a.numpy()   # (batch, n)
-            x_b_np = x_b.numpy()
+        pbar = tqdm(total=M, desc="All pairs")
+        for count, (i, j) in enumerate(pairs):
+            a = images[i]
+            b = images[j]
 
-            for i in range(x_a_np.shape[0]):
-                if count >= M:
-                    break
+            # ground-truth potentials via Sinkhorn (Algorithm 1)
+            f_gt, g_gt = self._solve_entropic_ot(a, b)
 
-                a = x_a_np[i]   # source histogram
-                b = x_b_np[i]   # target histogram
+            # sliced-OT feature matrices
+            Xf, Xg = self._compute_features(a, b)
 
-                # --- ground-truth potentials via Sinkhorn ---
-                f_gt, g_gt = self._solve_entropic_ot(a, b)
+            # centre to remove additive gauge constant of the dual
+            f_gt = f_gt - f_gt.mean()
+            g_gt = g_gt - g_gt.mean()
+            Xf   = Xf - Xf.mean(axis=0, keepdims=True)
+            Xg   = Xg - Xg.mean(axis=0, keepdims=True)
 
-                # --- sliced-OT feature matrices ---
-                Xf, Xg = self._compute_features(a, b)
+            Phi_f_list.append(Xf)
+            Phi_g_list.append(Xg)
+            y_f_list.append(f_gt)
+            y_g_list.append(g_gt)
 
-                # NEW: SPATIAL MEAN-CENTERING (Khử nhiễu hằng số)
-                # ==========================================
-                f_gt = f_gt - np.mean(f_gt)
-                g_gt = g_gt - np.mean(g_gt)
-                Xf = Xf - np.mean(Xf, axis=0, keepdims=True)
-                Xg = Xg - np.mean(Xg, axis=0, keepdims=True)
-
-                Phi_f_list.append(Xf)    # (n, L)
-                Phi_g_list.append(Xg)
-                y_f_list.append(f_gt)    # (n,)
-                y_g_list.append(g_gt)
-
-                count += 1
-                pbar.update(1)
+            pbar.update(1)
+            if (count + 1) % 20 == 0:
                 self.logger.info(
-                    f"Pair {count}/{M} | "
+                    f"Pair {count+1}/{M} | "
                     f"||f_gt||={np.linalg.norm(f_gt):.4f}, "
                     f"||g_gt||={np.linalg.norm(g_gt):.4f}"
                 )
 
-            if count >= M:
-                break
-
         pbar.close()
-
-        if count < M:
-            self.logger.warning(
-                f"Only {count} pairs collected (requested {M}). "
-                "Consider increasing the dataset or reducing num_bootstrap."
-            )
 
         # --- stack all pairs → joint regression ---
         Phi_f = np.vstack(Phi_f_list)        # (count * n, L)
@@ -292,6 +310,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
         self.logger.info(f"[Fit] Saved alpha/beta to {self.log_sub_folder}")
 
         return alpha, beta
+
 
     # ------------------------------------------------------------------
     # Steps 7-8: Predict potentials + transport plan for a new pair
