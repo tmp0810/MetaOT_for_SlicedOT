@@ -351,38 +351,64 @@ class OT_Regression_Sliced(Defense_Train_Base):
         g_pred = Xg @ beta     # (n,)
         return f_pred, g_pred
 
-    def _potentials_to_plan(self, f: np.ndarray, g: np.ndarray) -> np.ndarray:
-        """
-        Recover the (regularised) transport plan from Kantorovich potentials.
+    # def _potentials_to_plan(self, f: np.ndarray, g: np.ndarray) -> np.ndarray:
+    #     """
+    #     Recover the (regularised) transport plan from Kantorovich potentials.
 
-        P_{ij} = exp((f_i + g_j - C_ij) / eps)  (up to normalisation).
+    #     P_{ij} = exp((f_i + g_j - C_ij) / eps)  (up to normalisation).
 
-        Notes
-        -----
-        - Potentials are centred before exponentiation to prevent overflow.
-          The dual (f, g) has a free additive constant: (f+c, g-c) leaves
-          the plan invariant up to a global scalar, so subtracting means is safe.
-        - The plan is clipped and normalised to sum=1 so it can be used
-          directly as a probability distribution in np.random.choice.
-        """
+    #     Notes
+    #     -----
+    #     - Potentials are centred before exponentiation to prevent overflow.
+    #       The dual (f, g) has a free additive constant: (f+c, g-c) leaves
+    #       the plan invariant up to a global scalar, so subtracting means is safe.
+    #     - The plan is clipped and normalised to sum=1 so it can be used
+    #       directly as a probability distribution in np.random.choice.
+    #     """
+    #     eps = self.cfg_m.epsilon
+
+    #     # Centre potentials to prevent exp overflow / underflow
+    #     f_c = f - f.mean()
+    #     g_c = g - g.mean()
+
+    #     # Compute log-plan then shift by max for numerical stability
+    #     log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
+    #     log_P -= log_P.max()
+    #     P = np.exp(log_P)
+
+    #     # Clip tiny negatives from floating-point noise, normalise to sum=1
+    #     P = np.clip(P, 0.0, None)
+    #     P_sum = P.sum()
+    #     if P_sum > 0:
+    #         P /= P_sum
+    #     return P
+
+    def _potentials_to_plan(self, a: np.ndarray, b: np.ndarray, f: np.ndarray, g: np.ndarray) -> np.ndarray:
         eps = self.cfg_m.epsilon
 
-        # Centre potentials to prevent exp overflow / underflow
         f_c = f - f.mean()
         g_c = g - g.mean()
 
-        # Compute log-plan then shift by max for numerical stability
         log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
         log_P -= log_P.max()
         P = np.exp(log_P)
 
-        # Clip tiny negatives from floating-point noise, normalise to sum=1
+        # 1. Ép P phải gom lại thành hình dáng ảnh nguồn (a)
+        r = P.sum(axis=1) + 1e-12
+        P = P * (a / r)[:, None]
+        
+        # 2. Ép P phải gom lại thành hình dáng ảnh đích (b)
+        c = P.sum(axis=0) + 1e-12
+        P = P * (b / c)[None, :]
+        # ==========================================
+
         P = np.clip(P, 0.0, None)
         P_sum = P.sum()
-        if P_sum > 0:
-            P /= P_sum
+        # if P_sum > 0:
+        #     P /= P_sum
         return P
 
+        
     # ------------------------------------------------------------------
     # Geodesic interpolation (moved from OT_Discrete)
     # ------------------------------------------------------------------
@@ -444,11 +470,13 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
             # Ground-truth potentials & plan
             f_gt, g_gt = self._solve_entropic_ot(a, b)
-            P_gt        = self._potentials_to_plan(f_gt, g_gt)
+            #P_gt        = self._potentials_to_plan(f_gt, g_gt)
+            P_gt = self._potentials_to_plan(a, b, f_gt, g_gt)
 
             # Predicted potentials & plan
             f_pred, g_pred = self._predict_potentials(a, b, alpha, beta)
-            P_pred          = self._potentials_to_plan(f_pred, g_pred)
+            #P_pred          = self._potentials_to_plan(f_pred, g_pred)
+            P_pred = self._potentials_to_plan(a, b, f_pred, g_pred)
 
             # Normm
             f_pred_c = f_pred - f_pred.mean()
