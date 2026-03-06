@@ -19,12 +19,12 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced":
         # ── Regression / amortisation parameters ──────────────────────────
-        cfg_m.insert("num_samples", 30)   
+        cfg_m.insert("num_samples", 10)   
 
         # L: number of random 1-D projection directions (θ_1, …, θ_L).
         #    Controls the richness of the feature representation.
         #    Typical range: 100 – 1000.
-        cfg_m.insert("num_projections", 100)
+        cfg_m.insert("num_projections", 1000)
 
         # Tikhonov regularisation λ for the simplex-LS problems.
         #    Set to 0.0 for pure simplex projection; > 0 helps when columns
@@ -33,10 +33,10 @@ def init_cfg(n_solver):
 
         # ── OT / image parameters (mirror OT_Discrete for fair comparison) ─
         cfg_m.insert("img_size", 28)          # pixel side length
-        cfg_m.insert("epsilon", 0.03)          # entropic regularisation ε — must be large enough so K=exp(-C/ε) has no zero entries (ε=0.01 causes 57% of K to be ~0 → Sinkhorn diverges)
+        cfg_m.insert("epsilon", 0.01)          # entropic regularisation ε — must be large enough so K=exp(-C/ε) has no zero entries (ε=0.01 causes 57% of K to be ~0 → Sinkhorn diverges)
         cfg_m.insert("batch_size", 64)        # dataloader batch size
         cfg_m.insert("valid_rate", 0.0)       # no validation split needed
         cfg_m.insert("log_interval", 1)       # not used (no epochs)
-        cfg_m.insert("sinkhorn_iters", 300)  # Algorithm 1 iterations
+        cfg_m.insert("sinkhorn_iters", 1000)  # Algorithm 1 iterations
 
     return cfg_m
