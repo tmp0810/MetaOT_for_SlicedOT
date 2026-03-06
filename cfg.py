@@ -19,12 +19,12 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced":
         # ── Regression / amortisation parameters ──────────────────────────
-        cfg_m.insert("num_samples", 50)   
+        cfg_m.insert("num_samples", 20)   
 
         # L: number of random 1-D projection directions (θ_1, …, θ_L).
         #    Controls the richness of the feature representation.
         #    Typical range: 100 – 1000.
-        cfg_m.insert("num_projections", 200)
+        cfg_m.insert("num_projections", 100)
 
         # Tikhonov regularisation λ for the simplex-LS problems.
         #    Set to 0.0 for pure simplex projection; > 0 helps when columns
