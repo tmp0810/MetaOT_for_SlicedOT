@@ -14,11 +14,11 @@ def pre_data(data_name, cfg_proj, cfg_m):
         rate = [int(len(dataset_train)*(1-cfg_m.valid_rate)), int(len(dataset_train)*cfg_m.valid_rate)]        
         rate[0] = rate[0] + (len(dataset_train) - sum(rate))  
         dataset_train, dataset_valid = random_split(dataset_train, rate)
-        dataloader_valid= DataLoader(dataset=dataset_valid, batch_size=cfg_m.batch_size, num_workers=8, drop_last=True, shuffle=False)
+        dataloader_valid= DataLoader(dataset=dataset_valid, batch_size=cfg_m.batch_size, num_workers=2, drop_last=True, shuffle=False)
     else:
         dataset_valid = None
         dataloader_valid = None
-    dataloader_train= DataLoader(dataset=dataset_train, batch_size=cfg_m.batch_size, num_workers = 16, drop_last=True, shuffle=True)
+    dataloader_train= DataLoader(dataset=dataset_train, batch_size=cfg_m.batch_size, num_workers = 2, drop_last=True, shuffle=True)
     
     #test data
     if data_name.upper() == "STL10_UNLABELED":
@@ -26,6 +26,6 @@ def pre_data(data_name, cfg_proj, cfg_m):
         dataloader_test = None
     else:
         dataset_test = dataset_class(flag_train = False, cfg_m = cfg_m)
-        dataloader_test= DataLoader(dataset=dataset_test, batch_size=cfg_m.batch_size, num_workers = 8, drop_last=True, shuffle=False)
+        dataloader_test= DataLoader(dataset=dataset_test, batch_size=cfg_m.batch_size, num_workers = 2, drop_last=True, shuffle=False)
 
     return [dataloader_train, dataloader_valid, dataloader_test], [dataset_train, dataset_valid, dataset_test]
