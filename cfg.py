@@ -19,9 +19,7 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced":
         # ── Regression / amortisation parameters ──────────────────────────
-        # M: number of bootstrap pairs used to fit α and β.
-        #    More pairs → better generalisation, but slower fitting.
-        cfg_m.insert("num_bootstrap", 200)
+        cfg_m.insert("num_samples", 50)   
 
         # L: number of random 1-D projection directions (θ_1, …, θ_L).
         #    Controls the richness of the feature representation.
