@@ -1,322 +1,525 @@
-import torch
-import torch.nn as nn
-import ot
-import matplotlib.pyplot as plt
+"""
+OT_Regression_Sliced.py
+========================
+Regression-based amortised Optimal Transport via Sliced-OT features.
+
+Pipeline (from the NeurIPS 2026 draft):
+  1.  Bootstrap M training pairs (µ_i, ν_i) from the dataloader.
+  2.  Solve entropic OT (Sinkhorn) for each pair → Kantorovich potentials
+      f_i, g_i  ∈ R^n.
+  3.  Draw L fixed projection directions θ_1, …, θ_L  (unit sphere).
+  4.  For each pair i and direction l: project masses onto θ_l and solve
+      the resulting 1-D OT problem → 1-D potentials f_{i,θ_l}, g_{i,θ_l} ∈ R^n.
+  5.  Build feature matrices  Φ_f^i, Φ_g^i  ∈ R^{n × L}
+           Φ_f^i[:, l] = f_{i,θ_l}   (evaluated at projected positions of each grid point)
+  6.  Solve joint simplex-constrained least squares across all M pairs:
+           min_{α ≥ 0, Σα=1}  Σ_i  ||Φ_f^i α – f_i||²
+      and the analogous problem for β, g.
+  7.  Predict on a new pair: f̂ = Φ_f α,  ĝ = Φ_g β.
+  8.  Recover transport plan:  P = exp(f̂/ε) ⊗ K ⊗ exp(ĝ/ε).
+"""
+
+import os
 import numpy as np
-import cvxpy as cp
+import ot
+import torch
+from tqdm import tqdm
+
+from Solvers.DefenseTrain import Defense_Train_Base
+from regression_OT_utils import (
+    generate_uniform_unit_sphere_projections,
+    optimal_alpha_simplex,
+    solve_1D_ot,                  # fixed version (np.int64)
+    solve_1D_ot_unsorted,         # convenience wrapper that handles sorting
+)
 
 
-# ---------------------------------------------------------------------------
-# Simplex-constrained least-squares
-# ---------------------------------------------------------------------------
+class OT_Regression_Sliced(Defense_Train_Base):
+    """Regression-based amortised OT (Sliced-OT features)."""
 
-def optimal_alpha_simplex(X, y, ridge=0.0, solver="OSQP"):
-    """
-    Solve:  min ||X a - y||^2 + ridge * ||a||^2
-            s.t. a >= 0, sum(a) = 1
-    # Ở đây change lại không cần sum(a) = 1 nữa
-    Parameters
-    ----------
-    X     : (n, d) ndarray
-    y     : (n,)   ndarray
-    ridge : float >= 0.  0 = no regularisation; > 0 helps when columns of X
-            are nearly collinear.
+    def __init__(self, cfg_proj, cfg_m):
+        Defense_Train_Base.__init__(self, cfg_proj, cfg_m, name="OT_Regression_Sliced")
+        self._build_grid()
 
-    Returns
-    -------
-    a : (d,) ndarray  (on the probability simplex)
-    """
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float).reshape(-1)
+        # --- fixed projection directions θ_1, …, θ_L  (L × 2) ---
+        L = self.cfg_m.num_projections
+        proj = generate_uniform_unit_sphere_projections(
+            dim=2,
+            num_projections=L,
+            dtype=torch.float64,
+            device="cpu",
+        )
+        self.projection_matrix = proj.detach().numpy()   # (L, 2)
+        self.logger.info(
+            f"[OT_Regression_Sliced] projection_matrix: {self.projection_matrix.shape}, "
+            f"num_bootstrap={self.cfg_m.num_bootstrap}, ridge={self.cfg_m.ridge}"
+        )
 
-    n, d = X.shape
-    a = cp.Variable(d)
+    # ------------------------------------------------------------------
+    # Grid & squared-Euclidean cost matrix
+    # ------------------------------------------------------------------
 
-    obj = cp.sum_squares(X @ a - y)
-    if ridge and ridge > 0:
-        obj = obj + ridge * cp.sum_squares(a)
+    def _build_grid(self):
+        s = self.cfg_m.img_size
+        grid = []
+        for i in np.linspace(1, 0, num=s):
+            for j in np.linspace(0, 1, num=s):
+                grid.append([j, i])
+        self.x_grid = np.array(grid, dtype=np.float64)          # (n, 2), n = s²
+        diff = self.x_grid[:, None, :] - self.x_grid[None, :, :]
+        self.C = np.sum(diff ** 2, axis=-1)                      # (n, n)
 
-    #constraints = [a >= 0, cp.sum(a) == 1]
-    constraints = [a >= 0]
-    prob = cp.Problem(cp.Minimize(obj), constraints)
+    # ------------------------------------------------------------------
+    # Step 2: Entropic OT → ground-truth Kantorovich potentials
+    # ------------------------------------------------------------------
 
-    try:
-        prob.solve(solver=solver, verbose=False)
-    except Exception:
-        prob.solve(solver=cp.SCS, verbose=False)
+    def _solve_entropic_ot(self, a: np.ndarray, b: np.ndarray):
+        """
+        Sinkhorn algorithm in log-space — Algorithm 1 from the paper.
 
-    if a.value is None:
-        raise RuntimeError("optimal_alpha_simplex: solver failed to find a solution.")
-    return a.value  # np.ndarray shape (d,)
+        Iterates exactly as written:
+            g_i = eps*log(b) - eps*log( K^T exp{f_{i-1}/eps} )
+            f_i = eps*log(a) - eps*log( K   exp{g_i    /eps} )
 
+        Returns f_N, g_N directly — no POT dependency, no log-key issues.
 
-# ---------------------------------------------------------------------------
-# Projection directions
-# ---------------------------------------------------------------------------
+        Returns
+        -------
+        f : (n,) source Kantorovich potential
+        g : (n,) target Kantorovich potential
+        """
+        eps = self.cfg_m.epsilon
 
-def generate_uniform_unit_sphere_projections(
-    dim,
-    requires_grad=False,
-    num_projections=1000,
-    dtype=torch.float32,
-    device="cpu",
-):
-    """Generate uniformly random unit-sphere directions of shape (num_projections, dim)."""
-    projection_matrix = torch.randn((num_projections, dim), dtype=dtype, device=device)
-    projection_matrix = projection_matrix / projection_matrix.norm(dim=1, keepdim=True).clamp_min(1e-12)
-    if requires_grad:
-        projection_matrix.requires_grad_(True)
-    return projection_matrix
+        # Clamp weights to avoid log(0)
+        a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
+        b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
 
+        log_a = np.log(a_safe)   # (n,)
+        log_b = np.log(b_safe)   # (n,)
+        log_K = -self.C / eps    # (n, n) — log Gibbs kernel
 
-# ---------------------------------------------------------------------------
-# Quantile helper (used internally by Sliced-Wasserstein)
-# ---------------------------------------------------------------------------
+        def lse(X, axis):
+            """Numerically stable log-sum-exp."""
+            m = X.max(axis=axis, keepdims=True)
+            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
 
-def quantile_function(qs, cws, xs):
-    cws, _ = torch.sort(cws, dim=0)
-    qs, _ = torch.sort(qs, dim=0)
-    num_dist = xs.shape[0]
-    num_projections = xs.shape[-1]
-    cws = cws.t().contiguous()
-    qs = qs.t().contiguous()
-    idx = torch.searchsorted(cws, qs).t()
-    return torch.take_along_dim(
-        input=xs,
-        indices=idx.expand(num_projections, idx.shape[-1]).t().expand(num_dist, idx.shape[-1], num_projections),
-        dim=-2,
-    )
+        # Initialise f = 0 (Algorithm 1 sets f_0 = 0)
+        f = np.zeros_like(a_safe)
 
+        for _ in range(self.cfg_m.sinkhorn_iters):
+            # g = eps*log(b) - eps*lse_j( log_K[i,j] + f[j]/eps )
+            #   K^T means we sum over rows (axis=0) for each column j
+            g = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
+            # f = eps*log(a) - eps*lse_j( log_K[i,j] + g[j]/eps )
+            f = eps * (log_a - lse(log_K + g[None, :] / eps, axis=1))
 
-# ---------------------------------------------------------------------------
-# 1-D Optimal Transport  (BUG FIX: was using numba.int64, now uses np.int64)
-# ---------------------------------------------------------------------------
-
-def solve_1D_ot(a, b, x, y, p):
-    """Compute 1-D Optimal Transport between two histograms.
-
-    **Important**: ``np.sum(a)`` must equal ``np.sum(b)``.
-    **Important**: ``x`` and ``y`` must be **pre-sorted** in ascending order.
-
-    Parameters
-    ----------
-    a : (n,) ndarray  — source weights (positive, sum to 1)
-    b : (m,) ndarray  — target weights (positive, sum to 1)
-    x : (n,) ndarray  — source support positions (sorted)
-    y : (m,) ndarray  — target support positions (sorted)
-    p : float         — power (>= 1)
-
-    Returns
-    -------
-    I    : (q,) int64  — source indices of the sparse OT plan
-    J    : (q,) int64  — target indices of the sparse OT plan
-    P    : (q,) float  — masses of the sparse OT plan
-    f    : (n,) float  — source dual potential
-    g    : (m,) float  — target dual potential
-    cost : float       — dual OT cost  (= sum_i f_i a_i + sum_j g_j b_j)
-
-    Notes
-    -----
-    This is the North-West-corner / staircase algorithm for 1-D OT.
-    """
-    n = len(a)
-    m = len(b)
-    q = m + n - 1
-
-    a1 = a.copy()
-    b1 = b.copy()
-    I = np.zeros(q, dtype=np.int64)   # fixed: was numba.int64
-    J = np.zeros(q, dtype=np.int64)   # fixed: was numba.int64
-    P = np.zeros(q)
-    f = np.zeros(n)
-    g = np.zeros(m)
-
-    g[0] = np.abs(x[0] - y[0]) ** p
-
-    for k in range(q - 1):
-        i = I[k]
-        j = J[k]
-        if (a1[i] <= b1[j]) and (i < n - 1):
-            I[k + 1] = i + 1
-            J[k + 1] = j
-            f[i + 1] = np.abs(x[i + 1] - y[j]) ** p - g[j]
-        elif (a1[i] > b1[j]) and (j < m - 1):
-            I[k + 1] = i
-            J[k + 1] = j + 1
-            g[j + 1] = np.abs(x[i] - y[j + 1]) ** p - f[i]
-        elif i == n - 1:
-            I[k + 1] = i
-            J[k + 1] = j + 1
-            g[j + 1] = np.abs(x[i] - y[j + 1]) ** p - f[i]
-        elif j == m - 1:
-            I[k + 1] = i + 1
-            J[k + 1] = j
-            f[i + 1] = np.abs(x[i + 1] - y[j]) ** p - g[j]
-
-        t = min(a1[i], b1[j])
-        P[k] = t
-        a1[i] -= t
-        b1[j] -= t
-
-    P[k + 1] = max(a1[-1], b1[-1])
-    cost = np.sum(f * a) + np.sum(g * b)
-    return I, J, P, f, g, cost
-
-
-def solve_1D_ot_unsorted(a, b, x, y, p=2):
-    """
-    Convenience wrapper: sorts ``x`` and ``y``, calls ``solve_1D_ot``, then
-    maps the dual potentials ``f`` and ``g`` back to the **original** (unsorted)
-    index ordering.
-
-    Parameters
-    ----------
-    a, b : (n,) / (m,) weight vectors
-    x, y : (n,) / (m,) support positions (need NOT be sorted)
-    p    : power
-
-    Returns
-    -------
-    f_orig : (n,) dual potential for the source, in original order
-    g_orig : (m,) dual potential for the target, in original order
-    cost   : dual OT cost
-    """
-    idx_a = np.argsort(x)
-    idx_b = np.argsort(y)
-
-    x_s = x[idx_a]; a_s = a[idx_a]
-    y_s = y[idx_b]; b_s = b[idx_b]
-
-    _, _, _, f_s, g_s, cost = solve_1D_ot(a_s, b_s, x_s, y_s, p)
-
-    f_orig = np.empty_like(f_s)
-    g_orig = np.empty_like(g_s)
-    f_orig[idx_a] = f_s
-    g_orig[idx_b] = g_s
-
-    return f_orig, g_orig, cost
-
-
-# ---------------------------------------------------------------------------
-# Sliced-Wasserstein Distance
-# ---------------------------------------------------------------------------
-
-def Sliced_Wasserstein_Distance(
-    X,
-    Y,
-    num_projections=1000,
-    projection_matrix=None,
-    p=2,
-    device="cuda",
-    chunk=1000,
-    dtype=torch.float16,
-    return_vectors=False,
-):
-    """
-    Compute Sliced-Wasserstein Distance efficiently (supports backprop).
-
-    Parameters
-    ----------
-    X : (n_src, d)  source support
-    Y : (n_tgt, d)  target support
-    num_projections : int
-    projection_matrix : optional precomputed (num_projections, d) tensor
-    p : Wasserstein-p order
-    chunk : projections per chunk (memory management)
-    return_vectors : if True, return per-projection distances instead of mean
-
-    Returns
-    -------
-    Scalar SWD (or vector if return_vectors=True).
-    """
-    assert X.shape[-1] == Y.shape[-1], "Source and target must have the same dimension"
-    dims = X.shape[-1]
-
-    if projection_matrix is not None:
-        num_projections = projection_matrix.shape[0]
-
-    if num_projections < chunk:
-        chunk = num_projections
-        chunk_num_projections = 1
-    else:
-        chunk_num_projections = num_projections // chunk
-
-    sum_w_p = [] if return_vectors else torch.tensor(0.0, device=device)
-
-    for i in range(chunk_num_projections):
-        if projection_matrix is None:
-            projection_vectors = generate_uniform_unit_sphere_projections(
-                dim=dims, num_projections=chunk, device=device
+        if f.std() < 1e-8:
+            raise RuntimeError(
+                f"f_gt is constant (std={f.std():.2e}). "
+                f"Check epsilon={eps} and that a/b are valid histograms."
             )
-        else:
-            projection_vectors = projection_matrix[i * chunk : (i + 1) * chunk]
+        return f, g
+    # ------------------------------------------------------------------
+    # Steps 3-4: 1-D OT potentials along one projection direction
+    # ------------------------------------------------------------------
 
-        projection_vectors = projection_vectors.to(dtype)
-        X_proj = torch.matmul(X.to(dtype), projection_vectors.t())  # (n_src, chunk)
-        Y_proj = torch.matmul(Y.to(dtype), projection_vectors.t())  # (n_tgt, chunk)
+    @staticmethod
+    def _sliced_1d_potentials(
+        a: np.ndarray,
+        b: np.ndarray,
+        proj_positions: np.ndarray,
+        p: int = 2,
+    ):
+        """
+        Project masses onto a 1-D line and solve 1-D OT.
 
-        X_sorted, _ = torch.sort(X_proj, dim=0)
-        Y_sorted, _ = torch.sort(Y_proj, dim=0)
+        Both µ and ν share the same grid, so their projected positions
+        ``proj_positions = x_grid @ θ`` are identical; only the weights
+        a and b differ.
 
-        diff = torch.abs(X_sorted - Y_sorted)
-        w_1d = diff.mean(dim=0) if p == 1 else diff.pow(p).mean(dim=0)
+        Parameters
+        ----------
+        a, b          : (n,)  weight vectors (must sum to the same value)
+        proj_positions: (n,)  projected scalar positions for every grid point
+        p             : OT power
 
-        if return_vectors:
-            sum_w_p.append(w_1d.pow(1.0 / p))
-        else:
-            sum_w_p = sum_w_p + torch.sum(w_1d, dim=0)
+        Returns
+        -------
+        f1d : (n,) float — 1-D source potential in original grid ordering
+        g1d : (n,) float — 1-D target potential in original grid ordering
+        """
+        f1d, g1d, _ = solve_1D_ot_unsorted(a, b, proj_positions, proj_positions, p=p)
+        return f1d, g1d
+    # ------------------------------------------------------------------
+    # Step 5: Feature matrix for a single pair
+    # ------------------------------------------------------------------
 
-    if return_vectors:
-        return torch.cat(sum_w_p, dim=0)
-    else:
-        mean_w_p = sum_w_p / num_projections
-        return mean_w_p.pow(1.0 / p) if p != 1 else mean_w_p
+    def _compute_features(self, a: np.ndarray, b: np.ndarray):
+        """
+        Build sliced-OT feature matrices for one distribution pair.
+
+        Returns
+        -------
+        Xf : (n, L)  — Xf[:, l] = f_{θ_l}(P_{θ_l}(x_k))  for each grid point k
+        Xg : (n, L)  — Xg[:, l] = g_{θ_l}(P_{θ_l}(x_k))
+        """
+        n = len(a)
+        L = self.projection_matrix.shape[0]
+        Xf = np.empty((n, L), dtype=np.float64)
+        Xg = np.empty((n, L), dtype=np.float64)
+
+        for l, theta in enumerate(self.projection_matrix):
+            # Scalar projection of every grid point onto θ_l
+            proj = self.x_grid @ theta   # (n,)
+            f1d, g1d = self._sliced_1d_potentials(a, b, proj, p=2)
+            Xf[:, l] = f1d
+            Xg[:, l] = g1d
+
+        return Xf, Xg
+
+    # ------------------------------------------------------------------
+    # Step 6: Fit regression coefficients α, β (joint across all pairs)
+    # ------------------------------------------------------------------
+
+    def _fit(self, dataloader_train):
+        """
+        Sample M0 individual images, form all M0*(M0-1)/2 ordered pairs,
+        then solve the regression for α and β.
+
+        This follows the paper's protocol:
+            "M0 samples drawn from the training set, yielding
+             M = M0*(M0-1)/2 pairs used to estimate the RG coefficient."
+
+        Returns
+        -------
+        alpha : (L,) — regression weights for f
+        beta  : (L,) — regression weights for g
+        """
+        M0 = self.cfg_m.num_samples
+        M  = M0 * (M0 - 1) // 2
+        self.logger.info(
+            f"[Fit] Collecting M0={M0} images → M={M} pairs …"
+        )
+
+        # ── Step 1: collect M0 individual histograms ──────────────────────
+        # Pull from both x_a and x_b to maximise diversity of distributions.
+        images = []
+        for _, _, x_a, x_b in dataloader_train:
+            for img in x_a.numpy():
+                images.append(img)
+                if len(images) >= M0:
+                    break
+            if len(images) < M0:
+                for img in x_b.numpy():
+                    images.append(img)
+                    if len(images) >= M0:
+                        break
+            if len(images) >= M0:
+                break
+
+        if len(images) < M0:
+            self.logger.warning(
+                f"Only {len(images)} images available (requested M0={M0}). "
+                "Reduce num_samples or increase dataset size."
+            )
+            M0 = len(images)
+            M  = M0 * (M0 - 1) // 2
+
+        self.logger.info(f"[Fit] Collected {M0} images → {M} pairs")
+
+        # ── Step 2: enumerate all (i, j) pairs with i < j ─────────────────
+        pairs = [(i, j) for i in range(M0) for j in range(i + 1, M0)]
+
+        Phi_f_list, Phi_g_list = [], []
+        y_f_list,   y_g_list   = [], []
+
+        pbar = tqdm(total=M, desc="All pairs")
+        for count, (i, j) in enumerate(pairs):
+            a = images[i]
+            b = images[j]
+
+            # ground-truth potentials via Sinkhorn (Algorithm 1)
+            f_gt, g_gt = self._solve_entropic_ot(a, b)
+
+            # sliced-OT feature matrices
+            Xf, Xg = self._compute_features(a, b)
+
+            # centre to remove additive gauge constant of the dual
+            f_gt = f_gt - f_gt.mean()
+            g_gt = g_gt - g_gt.mean()
+            Xf   = Xf - Xf.mean(axis=0, keepdims=True)
+            Xg   = Xg - Xg.mean(axis=0, keepdims=True)
+
+            Phi_f_list.append(Xf)
+            Phi_g_list.append(Xg)
+            y_f_list.append(f_gt)
+            y_g_list.append(g_gt)
+
+            pbar.update(1)
+            if (count + 1) % 20 == 0:
+                self.logger.info(
+                    f"Pair {count+1}/{M} | "
+                    f"||f_gt||={np.linalg.norm(f_gt):.4f}, "
+                    f"||g_gt||={np.linalg.norm(g_gt):.4f}"
+                )
+
+        pbar.close()
+
+        # --- stack all pairs → joint regression ---
+        Phi_f = np.vstack(Phi_f_list)        # (count * n, L)
+        Phi_g = np.vstack(Phi_g_list)
+        y_f   = np.concatenate(y_f_list)     # (count * n,)
+        y_g   = np.concatenate(y_g_list)
+
+        # Normalise each feature column to unit std so that regression
+        # coefficients are comparable across projection directions.
+        # Save scale factors to apply the same normalisation at test time.
+        self.Xf_col_scale = np.std(Phi_f, axis=0).clip(1e-12)
+        self.Xg_col_scale = np.std(Phi_g, axis=0).clip(1e-12)
+        Phi_f = Phi_f / self.Xf_col_scale[None, :]
+        Phi_g = Phi_g / self.Xg_col_scale[None, :]
+
+        self.logger.info(
+            f"[Fit] Phi_f shape: {Phi_f.shape} → solving simplex LS for α …"
+        )
+        self.logger.info(
+            f"[Fit] y_f range: [{y_f.min():.4f}, {y_f.max():.4f}] | "
+            f"Phi_f range: [{Phi_f.min():.4f}, {Phi_f.max():.4f}]"
+        )
+        alpha = optimal_alpha_simplex(Phi_f, y_f, ridge=self.cfg_m.ridge)
+
+        self.logger.info("[Fit] Solving simplex LS for β …")
+        self.logger.info(
+            f"[Fit] y_g range: [{y_g.min():.4f}, {y_g.max():.4f}] | "
+            f"Phi_g range: [{Phi_g.min():.4f}, {Phi_g.max():.4f}]"
+        )
+        beta  = optimal_alpha_simplex(Phi_g, y_g, ridge=self.cfg_m.ridge)
+
+        alpha = alpha / self.Xf_col_scale
+        beta  = beta  / self.Xg_col_scale
+
+        self.logger.info(
+            f"[Fit] α: min={alpha.min():.4f}, max={alpha.max():.4f}, "
+            f"nnz={np.sum(alpha > 1e-6)}/{len(alpha)}"
+        )
+        self.logger.info(
+            f"[Fit] β: min={beta.min():.4f},  max={beta.max():.4f}, "
+            f"nnz={np.sum(beta  > 1e-6)}/{len(beta)}"
+        )
 
 
-# ---------------------------------------------------------------------------
-# Cost / kernel matrix helpers
-# ---------------------------------------------------------------------------
+        # Persist coefficients
+        np.save(os.path.join(self.log_sub_folder, "alpha.npy"), alpha)
+        np.save(os.path.join(self.log_sub_folder, "beta.npy"),  beta)
+        self.logger.info(f"[Fit] Saved alpha/beta to {self.log_sub_folder}")
 
-class cost_matrix_calculator:
-    def __init__(self, img_size, epsilon):
-        self.img_size = img_size
-        x_grid = []
+        return alpha, beta
+
+
+    # ------------------------------------------------------------------
+    # Steps 7-8: Predict potentials + transport plan for a new pair
+    # ------------------------------------------------------------------
+
+    def _predict_potentials(
+        self,
+        a: np.ndarray,
+        b: np.ndarray,
+        alpha: np.ndarray,
+        beta: np.ndarray,
+    ):
+        """
+        Predict Kantorovich potentials for a new pair using learned α, β.
+
+        f̂(x_k) = Σ_l α_l · f_{θ_l}(P_{θ_l}(x_k))
+        ĝ(x_k) = Σ_l β_l · g_{θ_l}(P_{θ_l}(x_k))
+        """
+        Xf, Xg = self._compute_features(a, b)
+
+        # ==========================================
+        # ĐỒNG BỘ CENTERING (Nếu bạn đã dùng ở _fit)
+        # ==========================================
+        Xf = Xf - np.mean(Xf, axis=0, keepdims=True)
+        Xg = Xg - np.mean(Xg, axis=0, keepdims=True)
+
+        # Apply the same column normalisation used during fitting
+        # if hasattr(self, "Xf_col_scale"):
+        #     Xf = Xf / self.Xf_col_scale[None, :]
+        #     Xg = Xg / self.Xg_col_scale[None, :]
+        # Đã chia alpha, beta ở trên nên giờ không cần nữa
+
+        f_pred = Xf @ alpha    # (n,)
+        g_pred = Xg @ beta     # (n,)
+        return f_pred, g_pred
+
+    # def _potentials_to_plan(self, f: np.ndarray, g: np.ndarray) -> np.ndarray:
+    #     """
+    #     Recover the (regularised) transport plan from Kantorovich potentials.
+
+    #     P_{ij} = exp((f_i + g_j - C_ij) / eps)  (up to normalisation).
+
+    #     Notes
+    #     -----
+    #     - Potentials are centred before exponentiation to prevent overflow.
+    #       The dual (f, g) has a free additive constant: (f+c, g-c) leaves
+    #       the plan invariant up to a global scalar, so subtracting means is safe.
+    #     - The plan is clipped and normalised to sum=1 so it can be used
+    #       directly as a probability distribution in np.random.choice.
+    #     """
+    #     eps = self.cfg_m.epsilon
+
+    #     # Centre potentials to prevent exp overflow / underflow
+    #     f_c = f - f.mean()
+    #     g_c = g - g.mean()
+
+    #     # Compute log-plan then shift by max for numerical stability
+    #     log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
+    #     log_P -= log_P.max()
+    #     P = np.exp(log_P)
+
+    #     # Clip tiny negatives from floating-point noise, normalise to sum=1
+    #     P = np.clip(P, 0.0, None)
+    #     P_sum = P.sum()
+    #     if P_sum > 0:
+    #         P /= P_sum
+    #     return P
+
+    def _potentials_to_plan(self, a: np.ndarray, b: np.ndarray, f: np.ndarray, g: np.ndarray) -> np.ndarray:
+        eps = self.cfg_m.epsilon
+
+        f_c = f - f.mean()
+        g_c = g - g.mean()
+
+        log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
+        log_P -= log_P.max()
+        P = np.exp(log_P)
+
+        # 1. Ép P phải gom lại thành hình dáng ảnh nguồn (a)
+        r = P.sum(axis=1) + 1e-12
+        P = P * (a / r)[:, None]
+        
+        # 2. Ép P phải gom lại thành hình dáng ảnh đích (b)
+        c = P.sum(axis=0) + 1e-12
+        P = P * (b / c)[None, :]
+        # ==========================================
+
+        P = np.clip(P, 0.0, None)
+        P_sum = P.sum()
+        if P_sum > 0:
+            P /= P_sum
+        return P
+
+        
+    # ------------------------------------------------------------------
+    # Geodesic interpolation (moved from OT_Discrete)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def interp(P, num_inter, batch_size, img_size):
+        P_flatten = P.flatten()
+        grid = []
         for i in np.linspace(1, 0, num=img_size):
             for j in np.linspace(0, 1, num=img_size):
-                x_grid.append([j, i])
-        x_grid = np.array(x_grid, dtype=np.float64)
-        self.x = x_grid
-        self.y = x_grid
-        self.epsilon = epsilon
-        self.power = 2.0
+                grid.append([j, i])
+        x_grid = np.array(grid)
+        y_grid = np.array(grid)
 
-    def compute_C_K(self):
-        C = -2 * self.x @ self.y.T
-        C += self.norm(self.x)[:, np.newaxis] + self.norm(self.y)[np.newaxis, :]
-        K = np.exp(-C / self.epsilon)
-        return C, K
+        n_pixels = img_size * img_size   # n = 784 for img_size=28
+        def get_hist(t, P_flat):
+            map_samples = np.random.choice(range(len(P_flat)), size=batch_size, p=P_flat)
+            # P has shape (n_pixels, n_pixels), flat index = i * n_pixels + j
+            a_samples = x_grid[map_samples // n_pixels]   # source pixel index i
+            b_samples = y_grid[map_samples % n_pixels]    # target pixel index j
+            proj_samples = (1.0 - t) * a_samples + t * b_samples
+            hist, _, _ = np.histogram2d(
+                proj_samples[:, 1], proj_samples[:, 0],
+                bins=np.linspace(0.0, 1.0, num=img_size + 1),
+            )
+            hist = np.flipud(hist)
+            # Only clip if there are actually non-zero entries above the threshold.
+            # Using quantile on a sparse hist (many zeros) gives thresh=0
+            # which wipes everything → white image.
+            nonzero = hist[hist > 0]
+            if len(nonzero) > 0:
+                thresh = np.quantile(nonzero, 0.9)  # 90th pctile of NON-ZERO bins only
+                if thresh > 0:
+                    hist = np.clip(hist, 0, thresh)
+            if hist.max() > 0:
+                hist = hist / hist.max()
+            return hist
 
-    def norm(self, x):
-        return np.sum(x ** 2, axis=-1)
+        return [get_hist(t, P_flatten) for t in np.linspace(0, 1, num=num_inter)]
 
+    # ------------------------------------------------------------------
+    # Evaluation & visualisation (mirrors OT_Discrete.OT_D_test)
+    # ------------------------------------------------------------------
 
-class potentials_f_g:
-    def __init__(self, img_size, epsilon, device):
-        self.img_size = img_size
-        self.device = device
-        self.epsilon = epsilon
-        c_cal = cost_matrix_calculator(img_size, epsilon)
-        cost_matrix, kernel_matrix = c_cal.compute_C_K()
-        self.K = torch.tensor(kernel_matrix, dtype=torch.float64).to(device)
-        self.C = torch.tensor(cost_matrix, dtype=torch.float64).to(device)
+    def _evaluate(self, dataloader_test, alpha: np.ndarray, beta: np.ndarray):
+        """Compute transport plans, report RMSE in potentials, and save geodesics."""
+        from Utils import utils
 
-    def pred_transport(self, f_pred, g_pred):
-        """
-        Recover transport plan from potentials.
+        # Grab a small test batch
+        for _, _, xs_a, xs_b in dataloader_test:
+            xs_a_np = xs_a[:2].numpy()
+            xs_b_np = xs_b[:2].numpy()
+            break
 
-        f_pred, g_pred : (..., n) tensors  (e.g. output of X_f @ alpha)
-        """
-        f_expand = f_pred.unsqueeze(-1)   # (..., n, 1)
-        g_expand = g_pred.unsqueeze(-2)   # (..., 1, n)
-        P = torch.exp(f_expand / self.epsilon) * self.K * torch.exp(g_expand / self.epsilon)
-        return P.data.cpu().numpy()
+        img_size = self.cfg_m.img_size
+
+        for idx in range(len(xs_a_np)):
+            a, b = xs_a_np[idx], xs_b_np[idx]
+
+            # Ground-truth potentials & plan
+            f_gt, g_gt = self._solve_entropic_ot(a, b)
+            #P_gt        = self._potentials_to_plan(f_gt, g_gt)
+            P_gt = self._potentials_to_plan(a, b, f_gt, g_gt)
+
+            # Predicted potentials & plan
+            f_pred, g_pred = self._predict_potentials(a, b, alpha, beta)
+            #P_pred          = self._potentials_to_plan(f_pred, g_pred)
+            P_pred = self._potentials_to_plan(a, b, f_pred, g_pred)
+
+            # Normm
+            f_pred_c = f_pred - f_pred.mean()
+            f_gt_c   = f_gt - f_gt.mean()
+            g_pred_c = g_pred - g_pred.mean()
+            g_gt_c   = g_gt - g_gt.mean()
+            # Potential RMSE
+            # rmse_f = float(np.sqrt(np.mean((f_pred - f_gt) ** 2)))
+            # rmse_g = float(np.sqrt(np.mean((g_pred - g_gt) ** 2)))
+
+            # Potential RMSE (on centered potentials — apples-to-apples)
+            rmse_f = float(np.sqrt(np.mean((f_pred_c - f_gt_c) ** 2)))
+            rmse_g = float(np.sqrt(np.mean((g_pred_c - g_gt_c) ** 2)))
+
+            msg = (
+                f"[Eval {idx}]  RMSE_f={rmse_f:.6f}  RMSE_g={rmse_g:.6f} | "
+                f"plan_sum_gt={P_gt.sum():.4f}  plan_sum_pred={P_pred.sum():.4f}"
+            )
+            print(msg)
+            self.logger.info(msg)
+
+            # Geodesic interpolation images — call via class, not self, to avoid
+            # Python treating P as a positional arg for the first parameter
+            imgs_gt   = OT_Regression_Sliced.interp(P_gt,   num_inter=11, batch_size=50_000, img_size=img_size)
+            imgs_pred = OT_Regression_Sliced.interp(P_pred, num_inter=11, batch_size=50_000, img_size=img_size)
+
+            utils.save_r(
+                imgs_gt,
+                torch.tensor(a), torch.tensor(b),
+                path=self.log_sub_folder,
+                title=f"GroundTruth_{idx}",
+            )
+            utils.save_r(
+                imgs_pred,
+                torch.tensor(a), torch.tensor(b),
+                path=self.log_sub_folder,
+                title=f"Pred_{idx}",
+            )
+
+    # ------------------------------------------------------------------
+    # Entry point (called by Pre_Model.train)
+    # ------------------------------------------------------------------
+
+    def train(self, dataloader_train, dataloader_test):
+        alpha, beta = self._fit(dataloader_train)
+        self._evaluate(dataloader_test, alpha, beta)
