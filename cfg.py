@@ -24,7 +24,7 @@ def init_cfg(n_solver):
         # L: number of random 1-D projection directions (θ_1, …, θ_L).
         #    Controls the richness of the feature representation.
         #    Typical range: 100 – 1000.
-        cfg_m.insert("num_projections", 1000)
+        cfg_m.insert("num_projections", 500)
 
         # Tikhonov regularisation λ for the simplex-LS problems.
         #    Set to 0.0 for pure simplex projection; > 0 helps when columns
