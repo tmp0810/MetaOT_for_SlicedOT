@@ -19,7 +19,7 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced":
         # ── Regression / amortisation parameters ──────────────────────────
-        cfg_m.insert("num_samples", 50)   
+        cfg_m.insert("num_samples", 20)   
 
         # L: number of random 1-D projection directions (θ_1, …, θ_L).
         #    Controls the richness of the feature representation.
@@ -37,6 +37,6 @@ def init_cfg(n_solver):
         cfg_m.insert("batch_size", 64)        # dataloader batch size
         cfg_m.insert("valid_rate", 0.0)       # no validation split needed
         cfg_m.insert("log_interval", 1)       # not used (no epochs)
-        cfg_m.insert("sinkhorn_iters", 1000)  # Algorithm 1 iterations
+        cfg_m.insert("sinkhorn_iters", 500)  # Algorithm 1 iterations
 
     return cfg_m
