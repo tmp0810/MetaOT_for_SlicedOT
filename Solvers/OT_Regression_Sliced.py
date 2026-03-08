@@ -294,11 +294,14 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
             rmse_f = float(np.sqrt(np.mean((f_pred_c - f_gt_c) ** 2)))
             rmse_g = float(np.sqrt(np.mean((g_pred_c - g_gt_c) ** 2)))
+            rmse_P = float(np.sqrt(np.mean((P_pred - P_gt) ** 2)))
 
             msg = (
                 f"[Eval {idx}]  RMSE_f={rmse_f:.6f}  RMSE_g={rmse_g:.6f} | "
+                f"RMSE_Plan={rmse_P:.8f} | "
                 f"plan_sum_gt={P_gt.sum():.4f}  plan_sum_pred={P_pred.sum():.4f}"
             )
+
             print(msg)
             self.logger.info(msg)
 
