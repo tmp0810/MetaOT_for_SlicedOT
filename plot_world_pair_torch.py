@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 plt.style.use('bmh')
 
-from world_pair_data import load_world_locations, WorldPairDataset
+from Data.world_pair_data import load_world_locations, WorldPairDataset
 
 
 
@@ -176,7 +176,7 @@ def main():
     else:
         # Fallback: load alpha/beta .npy and rebuild model
         from cfg import init_cfg
-        from OT_Regression_Sliced_World import OT_Regression_Sliced_World
+        from Solvers.OT_Regression_Sliced_World import OT_Regression_Sliced_World
 
         cfg_m   = init_cfg("OT_Regression_Sliced_World")
         cfg_proj = type('cfg_proj', (), {'log_folder': args.model_dir})()
@@ -187,7 +187,7 @@ def main():
         model.beta  = np.load(os.path.join(args.model_dir, 'beta.npy'))
 
     # Precompute cost matrix (shared across samples)
-    from OT_Regression_Sliced_World import _sphere_cost
+    from Solvers.OT_Regression_Sliced_World import _sphere_cost
     C = _sphere_cost(supply_euc, demand_euc)   # (n_supply, n_demand)
 
     # ── Plot each sample ──────────────────────────────────────────────────
