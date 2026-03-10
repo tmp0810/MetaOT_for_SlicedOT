@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
+from Solvers.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
 from regression_OT_utils import (
     generate_uniform_unit_sphere_projections,
     emd1D_dual,
@@ -147,7 +147,7 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
         P : (n_supply, n_demand)  transport plan (sums to 1)
         """
         f_pred, g_pred = self._predict_potentials(a, b, self.alpha, self.beta)
-        return self._potentials_to_plan(f_pred, g_pred)
+        return self._potentials_to_plan(a, b, f_pred, g_pred)
 
     # ------------------------------------------------------------------
     # Override: train — skip MNIST _evaluate, just fit
