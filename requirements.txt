@@ -6,3 +6,4 @@ osqp>=0.6.0
 scipy>=1.10.0
 matplotlib>=3.7.0
 tqdm>=4.65.0
+rasterio
