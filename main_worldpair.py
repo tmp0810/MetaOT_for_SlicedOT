@@ -6,8 +6,8 @@ import numpy as np
 import torch
 
 from cfg import init_cfg
-from world_pair_data import load_world_locations, get_world_pair_dataloader
-from OT_Regression_Sliced_World import OT_Regression_Sliced_World
+from Data.world_pair_data import load_world_locations, get_world_pair_dataloader
+from Solvers.OT_Regression_Sliced_World import OT_Regression_Sliced_World
 
 
 def parse_args():
