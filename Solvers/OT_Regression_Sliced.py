@@ -7,10 +7,11 @@ from tqdm import tqdm
 from Solvers.DefenseTrain import Defense_Train_Base
 from regression_OT_utils import (
     generate_uniform_unit_sphere_projections,
-    optimal_alpha_simplex,
-    solve_1D_ot,                  
-    solve_1D_ot_unsorted,         
+    _ridge_regression,
+    emd1D,                  
+    emd1D_dual,         
 )
+
 
 class OT_Regression_Sliced(Defense_Train_Base):
     def __init__(self, cfg_proj, cfg_m):
@@ -63,133 +64,110 @@ class OT_Regression_Sliced(Defense_Train_Base):
         return f, g
  
 
-    @staticmethod
-    def _sliced_1d_potentials(
-        a: np.ndarray,
-        b: np.ndarray,
-        proj_positions: np.ndarray,
-        p: int = 2,
-    ):
-        f1d, g1d, _ = solve_1D_ot_unsorted(a, b, proj_positions, proj_positions, p=p)
-        return f1d, g1d
 
     def _compute_features(self, a: np.ndarray, b: np.ndarray):
- 
+        device = torch.device(
+            f"cuda:{self.cfg_m.gpu}"
+            if torch.cuda.is_available() and hasattr(self.cfg_m, "gpu")
+            else "cpu"
+        )
         n = len(a)
         L = self.projection_matrix.shape[0]
-        Xf = np.empty((n, L), dtype=np.float64)
-        Xg = np.empty((n, L), dtype=np.float64)
 
-        for l, theta in enumerate(self.projection_matrix):
-            proj = self.x_grid @ theta   # (n,)
-            f1d, g1d = self._sliced_1d_potentials(a, b, proj, p=2)
-            Xf[:, l] = f1d
-            Xg[:, l] = g1d
+        proj_values = torch.tensor(
+            (self.x_grid @ self.projection_matrix.T).T,   # (L, n)
+            dtype=torch.float64, device=device
+        )
+
+        a_t = torch.tensor(a, dtype=torch.float64, device=device)  # (n,)
+        b_t = torch.tensor(b, dtype=torch.float64, device=device)  # (n,)
+
+        f_grad, g_grad, _ = emd1D_dual(
+            proj_values, proj_values,   
+            u_weights=a_t,
+            v_weights=b_t,
+            p=2,
+            require_sort=True,
+        )
+
+        Xf = f_grad.cpu().numpy().T   # (n, L)
+        Xg = g_grad.cpu().numpy().T   # (n, L)
 
         return Xf, Xg
     
     def _fit(self, dataloader_train):
-   
-        M0 = self.cfg_m.num_samples
-        M  = M0 * (M0 - 1) // 2
-        self.logger.info(
-            f"[Fit] Collecting M0={M0} images → M={M} pairs …"
-        )
-
-        # Collect M0
-        images = []
-        for _, _, x_a, x_b in dataloader_train:
-            for img in x_a.numpy():
-                images.append(img)
-                if len(images) >= M0:
-                    break
-            if len(images) < M0:
-                for img in x_b.numpy():
-                    images.append(img)
-                    if len(images) >= M0:
-                        break
-            if len(images) >= M0:
-                break
-
-        if len(images) < M0:
-            self.logger.warning(
-                f"Only {len(images)} images available (requested M0={M0}). "
-                "Reduce num_samples or increase dataset size."
-            )
-            M0 = len(images)
-            M  = M0 * (M0 - 1) // 2
-
-
-        pairs = [(i, j) for i in range(M0) for j in range(i + 1, M0)]
+        
+        M = self.cfg_m.num_bootstrap
+        self.logger.info(f"[Fit] Collecting M={M} pairs …")
 
         Phi_f_list, Phi_g_list = [], []
         y_f_list,   y_g_list   = [], []
+        count = 0
 
-        pbar = tqdm(total=M, desc="All pairs")
-        for count, (i, j) in enumerate(pairs):
-            a = images[i]
-            b = images[j]
-            f_gt, g_gt = self._solve_entropic_ot(a, b)
-            Xf, Xg = self._compute_features(a, b)
+        pbar = tqdm(total=M, desc="Pairs")
+        for _, _, x_a, x_b in dataloader_train:
+            for a, b in zip(x_a.numpy(), x_b.numpy()):
+                if count >= M:
+                    break
 
-            # Centering tránh tràn số (overflow)
+                f_gt, g_gt = self._solve_entropic_ot(a, b)
+                f_gt = f_gt - f_gt.mean()
+                g_gt = g_gt - g_gt.mean()
 
-            f_gt = f_gt - f_gt.mean()
-            g_gt = g_gt - g_gt.mean()
-            Xf   = Xf - Xf.mean(axis=0, keepdims=True)
-            Xg   = Xg - Xg.mean(axis=0, keepdims=True)
+                Xf, Xg = self._compute_features(a, b)
+                Xf = Xf - Xf.mean(axis=0, keepdims=True)
+                Xg = Xg - Xg.mean(axis=0, keepdims=True)
 
-            Phi_f_list.append(Xf)
-            Phi_g_list.append(Xg)
-            y_f_list.append(f_gt)
-            y_g_list.append(g_gt)
+                Phi_f_list.append(Xf)
+                Phi_g_list.append(Xg)
+                y_f_list.append(f_gt)
+                y_g_list.append(g_gt)
 
-            pbar.update(1)
-            if (count + 1) % 20 == 0:
-                self.logger.info(
-                    f"Pair {count+1}/{M} | "
-                    f"||f_gt||={np.linalg.norm(f_gt):.4f}, "
-                    f"||g_gt||={np.linalg.norm(g_gt):.4f}"
-                )
-
+                count += 1
+                pbar.update(1)
+                if count % 20 == 0:
+                    self.logger.info(
+                        f"Pair {count}/{M} | "
+                        f"||f_gt||={np.linalg.norm(f_gt):.4f}, "
+                        f"||g_gt||={np.linalg.norm(g_gt):.4f}"
+                    )
+            if count >= M:
+                break
         pbar.close()
 
-        Phi_f = np.vstack(Phi_f_list)        
-        Phi_g = np.vstack(Phi_g_list)
-        y_f   = np.concatenate(y_f_list)   
-        y_g   = np.concatenate(y_g_list)
-
-        self.Xf_col_scale = np.std(Phi_f, axis=0).clip(1e-12)
-        self.Xg_col_scale = np.std(Phi_g, axis=0).clip(1e-12)
-        Phi_f = Phi_f / self.Xf_col_scale[None, :]
-        Phi_g = Phi_g / self.Xg_col_scale[None, :]
+        Phi_f = np.vstack(Phi_f_list)     
+        Phi_g = np.vstack(Phi_g_list)     
+        y_f   = np.concatenate(y_f_list)  
+        y_g   = np.concatenate(y_g_list)  
 
         self.logger.info(
-            f"[Fit] Phi_f shape: {Phi_f.shape} → solving simplex LS for α …"
+            f"[Fit] Phi_f: {Phi_f.shape} | "
+            f"y_f range: [{y_f.min():.4f}, {y_f.max():.4f}]"
         )
-        self.logger.info(
-            f"[Fit] y_f range: [{y_f.min():.4f}, {y_f.max():.4f}] | "
-            f"Phi_f range: [{Phi_f.min():.4f}, {Phi_f.max():.4f}]"
-        )
-        alpha = optimal_alpha_simplex(Phi_f, y_f, ridge=self.cfg_m.ridge)
 
-        self.logger.info("[Fit] Solving simplex LS for β …")
-        self.logger.info(
-            f"[Fit] y_g range: [{y_g.min():.4f}, {y_g.max():.4f}] | "
-            f"Phi_g range: [{Phi_g.min():.4f}, {Phi_g.max():.4f}]"
-        )
-        beta  = optimal_alpha_simplex(Phi_g, y_g, ridge=self.cfg_m.ridge)
+        import time
+        ridge = self.cfg_m.ridge
+        self.logger.info(f"[Fit] Solving ridge regression for α …")
+        with tqdm(total=1, desc="Ridge α", bar_format="{desc}: {elapsed}") as pbar:
+            t0 = time.time()
+            alpha = _ridge_regression(Phi_f, y_f, ridge)
+            pbar.update(1)
+            pbar.set_description(f"Ridge α done in {time.time()-t0:.2f}s")
 
-        alpha = alpha / self.Xf_col_scale
-        beta  = beta  / self.Xg_col_scale
+        self.logger.info(f"[Fit] Solving ridge regression for β …")
+        with tqdm(total=1, desc="Ridge β", bar_format="{desc}: {elapsed}") as pbar:
+            t0 = time.time()
+            beta  = _ridge_regression(Phi_g, y_g, ridge)
+            pbar.update(1)
+            pbar.set_description(f"Ridge β done in {time.time()-t0:.2f}s")
 
         self.logger.info(
             f"[Fit] α: min={alpha.min():.4f}, max={alpha.max():.4f}, "
-            f"nnz={np.sum(alpha > 1e-6)}/{len(alpha)}"
+            f"nnz={np.sum(np.abs(alpha) > 1e-6)}/{len(alpha)}"
         )
         self.logger.info(
             f"[Fit] β: min={beta.min():.4f},  max={beta.max():.4f}, "
-            f"nnz={np.sum(beta  > 1e-6)}/{len(beta)}"
+            f"nnz={np.sum(np.abs(beta)  > 1e-6)}/{len(beta)}"
         )
 
         np.save(os.path.join(self.log_sub_folder, "alpha.npy"), alpha)
@@ -206,7 +184,6 @@ class OT_Regression_Sliced(Defense_Train_Base):
         alpha: np.ndarray,
         beta: np.ndarray,
     ):  
-        # Dùng Linear Regression
         Xf, Xg = self._compute_features(a, b)
         Xf = Xf - np.mean(Xf, axis=0, keepdims=True)
         Xg = Xg - np.mean(Xg, axis=0, keepdims=True)
