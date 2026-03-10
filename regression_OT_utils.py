@@ -3,31 +3,16 @@ import torch.nn as nn
 import ot
 import matplotlib.pyplot as plt
 import numpy as np
-import cvxpy as cp
+from sklearn.linear_model import Ridge
 
-def optimal_alpha_simplex(X, y, ridge=0.0, solver="OSQP"):
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float).reshape(-1)
-
-    n, d = X.shape
-    a = cp.Variable(d)
-
-    obj = cp.sum_squares(X @ a - y)
-    if ridge and ridge > 0:
-        obj = obj + ridge * cp.sum_squares(a)
-
-    #constraints = [a >= 0, cp.sum(a) == 1]
-    constraints = [a >= 0]
-    prob = cp.Problem(cp.Minimize(obj), constraints)
-
-    try:
-        prob.solve(solver=solver, verbose=False)
-    except Exception:
-        prob.solve(solver=cp.SCS, verbose=False)
-
-    if a.value is None:
-        raise RuntimeError("optimal_alpha_simplex: solver failed to find a solution.")
-    return a.value  
+def _ridge_regression(X, y, ridge=0.0):
+    X = np.asarray(X, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64).ravel()
+    H   = X.T @ X
+    Xty = X.T @ y
+    if ridge > 0:
+        H = H + ridge * np.eye(H.shape[0])
+    return np.linalg.solve(H, Xty)
 
 def generate_uniform_unit_sphere_projections(
     dim,
@@ -57,64 +42,127 @@ def quantile_function(qs, cws, xs):
         dim=-2,
     )
 
-def solve_1D_ot(a, b, x, y, p):  
-    #The North-West-corner / staircase algorithm for 1-D OT.
-    n = len(a)
-    m = len(b)
-    q = m + n - 1
-
-    a1 = a.copy()
-    b1 = b.copy()
-    I = np.zeros(q, dtype=np.int64)   
-    J = np.zeros(q, dtype=np.int64)   
-    P = np.zeros(q)
-    f = np.zeros(n)
-    g = np.zeros(m)
-
-    g[0] = np.abs(x[0] - y[0]) ** p
-
-    for k in range(q - 1):
-        i = I[k]
-        j = J[k]
-        if (a1[i] <= b1[j]) and (i < n - 1):
-            I[k + 1] = i + 1
-            J[k + 1] = j
-            f[i + 1] = np.abs(x[i + 1] - y[j]) ** p - g[j]
-        elif (a1[i] > b1[j]) and (j < m - 1):
-            I[k + 1] = i
-            J[k + 1] = j + 1
-            g[j + 1] = np.abs(x[i] - y[j + 1]) ** p - f[i]
-        elif i == n - 1:
-            I[k + 1] = i
-            J[k + 1] = j + 1
-            g[j + 1] = np.abs(x[i] - y[j + 1]) ** p - f[i]
-        elif j == m - 1:
-            I[k + 1] = i + 1
-            J[k + 1] = j
-            f[i + 1] = np.abs(x[i + 1] - y[j]) ** p - g[j]
-
-        t = min(a1[i], b1[j])
-        P[k] = t
-        a1[i] -= t
-        b1[j] -= t
-
-    P[k + 1] = max(a1[-1], b1[-1])
-    cost = np.sum(f * a) + np.sum(g * b)
-    return I, J, P, f, g, cost
+def cost_function(p):
+    """Returns elementwise cost C(x) = |x|^p as a torch function."""
+    if p == 1:
+        return torch.abs
+    if p == 2:
+        return torch.square
+    else:
+        return lambda x: torch.pow(torch.abs(x), p)
 
 
-def solve_1D_ot_unsorted(a, b, x, y, p=2):
-    idx_a = np.argsort(x)
-    idx_b = np.argsort(y)
+def emd1D(u_values, v_values, u_weights=None, v_weights=None, p=2, require_sort=True):
+    """
+    Vectorized 1-D OT loss via inverse-CDF formula.
 
-    x_s = x[idx_a]; a_s = a[idx_a]
-    y_s = y[idx_b]; b_s = b[idx_b]
+    Parameters
+    ----------
+    u_values  : (Proj, N)  support of source measures
+    v_values  : (Proj, M)  support of target measures
+    u_weights : (Proj, N) or (N,)  weights of source (uniform if None)
+    v_weights : (Proj, M) or (M,)  weights of target (uniform if None)
+    p         : cost exponent C(x)=|x|^p
+    require_sort : sort supports if not already sorted
 
-    _, _, _, f_s, g_s, cost = solve_1D_ot(a_s, b_s, x_s, y_s, p)
+    Returns
+    -------
+    loss : (Proj,)  1-D OT cost for each projection
+    """
+    proj = u_values.shape[0]
+    n    = u_values.shape[-1]
+    m    = v_values.shape[-1]
+    device, dtype = u_values.device, u_values.dtype
 
-    f_orig = np.empty_like(f_s)
-    g_orig = np.empty_like(g_s)
-    f_orig[idx_a] = f_s
-    g_orig[idx_b] = g_s
+    if u_weights is None:
+        u_weights = torch.full((proj, n), 1/n, dtype=dtype, device=device)
+    elif u_weights.dim() == 1:
+        u_weights = u_weights.unsqueeze(0).expand(proj, -1)
 
-    return f_orig, g_orig, cost
+    if v_weights is None:
+        v_weights = torch.full((proj, m), 1/m, dtype=dtype, device=device)
+    elif v_weights.dim() == 1:
+        v_weights = v_weights.unsqueeze(0).expand(proj, -1)
+
+    if require_sort:
+        u_values, u_sorter = torch.sort(u_values, -1)
+        v_values, v_sorter = torch.sort(v_values, -1)
+        u_weights = torch.gather(u_weights, -1, u_sorter)
+        v_weights = torch.gather(v_weights, -1, v_sorter)
+
+    u_cdf = torch.clamp(torch.cumsum(u_weights, -1), max=1.)
+    v_cdf = torch.clamp(torch.cumsum(v_weights, -1), max=1.)
+
+    cdf_axis, _ = torch.sort(torch.cat((u_cdf, v_cdf), -1), -1)
+
+    u_index = torch.searchsorted(u_cdf, cdf_axis)
+    v_index = torch.searchsorted(v_cdf, cdf_axis)
+
+    u_icdf = torch.gather(u_values, -1, u_index.clamp(0, n-1))
+    v_icdf = torch.gather(v_values, -1, v_index.clamp(0, m-1))
+
+    cdf_axis = torch.nn.functional.pad(cdf_axis, (1, 0))
+    delta = cdf_axis[..., 1:] - cdf_axis[..., :-1]
+
+    return torch.sum(delta * cost_function(p)(u_icdf - v_icdf), dim=-1)
+
+
+def emd1D_dual(u_values, v_values, u_weights=None, v_weights=None, p=2, require_sort=True):
+    """
+    Kantorovich dual potentials for a batch of 1-D OT problems via autograd.
+
+    By the envelope theorem, the gradient of W_p(a, b) w.r.t. a_i equals
+    the optimal source potential f_i*, and w.r.t. b_j equals g_j*.
+    This avoids the sequential NW-corner loop entirely.
+
+    Parameters
+    ----------
+    u_values  : (Proj, N)  support of source measures  (shared grid ok)
+    v_values  : (Proj, M)  support of target measures
+    u_weights : (Proj, N) or (N,)  source weights
+    v_weights : (Proj, M) or (M,)  target weights
+    p         : cost exponent
+    require_sort : passed through to emd1D
+
+    Returns
+    -------
+    f_grad : (Proj, N)  source potentials  ∂W/∂a
+    g_grad : (Proj, M)  target potentials  ∂W/∂b
+    loss   : scalar     total OT cost (sum over projections)
+
+    Notes
+    -----
+    - Potentials are unique only up to an additive constant per pair.
+      Centering (subtract mean) before regression is recommended.
+    - Gradients are computed jointly for all Proj directions in one
+      backward pass — fully vectorized on GPU.
+    """
+    proj = u_values.shape[0]
+    n    = u_values.shape[-1]
+    m    = v_values.shape[-1]
+    device, dtype = u_values.device, u_values.dtype
+
+    # Detach and enable grad on weights only
+    if u_weights is None:
+        mu = torch.full((proj, n), 1/n, dtype=dtype, device=device)
+    elif u_weights.dim() == 1:
+        mu = u_weights.unsqueeze(0).expand(proj, -1).clone().detach()
+    else:
+        mu = u_weights.clone().detach()
+
+    if v_weights is None:
+        nu = torch.full((proj, m), 1/m, dtype=dtype, device=device)
+    elif v_weights.dim() == 1:
+        nu = v_weights.unsqueeze(0).expand(proj, -1).clone().detach()
+    else:
+        nu = v_weights.clone().detach()
+
+    mu.requires_grad_(True)
+    nu.requires_grad_(True)
+
+    loss = emd1D(u_values, v_values,
+                 u_weights=mu, v_weights=nu,
+                 p=p, require_sort=require_sort).sum()
+    loss.backward()
+
+    return mu.grad, nu.grad, loss
