@@ -27,7 +27,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 plt.style.use('bmh')
 
-from world_pair_data import load_world_locations, WorldPairDataset
+from Data.world_pair_data import load_world_locations, WorldPairDataset
 
 
 # ---------------------------------------------------------------------------
