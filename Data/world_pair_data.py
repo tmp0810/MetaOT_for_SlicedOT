@@ -1,27 +1,6 @@
-"""
-world_pair_data.py
-==================
-PyTorch replacement for meta_ot/data.py WorldPairSampler.
-
-Fixed geometry:
-  - supply_locs (n_supply, 3): euclidean positions on unit sphere,
-    sampled once from uniform distribution over landmass.
-  - demand_locs (n_demand, 3): euclidean positions on unit sphere,
-    sampled once from population density distribution.
-
-Per-batch randomness (weights only):
-  - supply weights: bernoulli mask × uniform → normalized
-  - demand weights: uniform → normalized
-"""
-
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset, DataLoader
-
-
-# ---------------------------------------------------------------------------
-# Location loading (run once)
-# ---------------------------------------------------------------------------
 
 def load_world_locations(
     population_fname: str,
@@ -30,26 +9,6 @@ def load_world_locations(
     seed: int = 0,
     downsample: int = 4,
 ):
-    """
-    Load population tiff, sample fixed supply and demand locations on the sphere.
-
-    Parameters
-    ----------
-    population_fname : path to .tif population raster
-    n_supply         : number of supply locations (sparse)
-    n_demand         : number of demand locations (dense)
-    seed             : random seed
-    downsample       : spatial downsampling factor to reduce memory usage.
-                       downsample=4 on a 21600×43200 raster → 5400×10800 (~470MB float64).
-                       Increase if still OOM; set to 1 for full resolution.
-
-    Returns
-    -------
-    supply_spherical : (n_supply, 2)  [phi, theta] spherical coordinates
-    supply_euclidean : (n_supply, 3)  unit-sphere euclidean
-    demand_spherical : (n_demand, 2)
-    demand_euclidean : (n_demand, 3)
-    """
     import rasterio
     from rasterio.enums import Resampling
 
@@ -119,22 +78,7 @@ def load_world_locations(
     return supply_sph, supply_euc, demand_sph, demand_euc
 
 
-# ---------------------------------------------------------------------------
-# Streaming dataset
-# ---------------------------------------------------------------------------
-
 class WorldPairDataset(IterableDataset):
-    """
-    Infinite stream of (supply_weights, demand_weights) pairs.
-
-    Supply weights: bernoulli(p) mask × U[0,1], then L1-normalised.
-    Demand weights: U[0,1], then L1-normalised.
-
-    Yields 4-tuples  (dummy, dummy, supply_w, demand_w)
-    to match the interface expected by OT_Regression_Sliced._fit:
-        for _, _, x_a, x_b in dataloader: ...
-    """
-
     def __init__(
         self,
         n_supply: int = 100,
@@ -185,13 +129,6 @@ def get_world_pair_dataloader(
     seed: int       = 42,
     num_workers: int = 0,
 ) -> DataLoader:
-    """
-    Build a DataLoader that streams WorldPair samples.
-
-    Each batch: (dummy, dummy, supply_w, demand_w)
-      supply_w : (batch, n_supply)
-      demand_w : (batch, n_demand)
-    """
     dataset = WorldPairDataset(
         n_supply=n_supply,
         n_demand=n_demand,
