@@ -1,3 +1,24 @@
+"""
+plot_world_pair_torch.py
+========================
+Adapted from meta_ot/plot_world_pair.py.
+
+Changes vs. original:
+  - JAX/OTT replaced with PyTorch + POT.
+  - Uses OT_Regression_Sliced_World instead of the meta-OT MLP solver.
+  - Stereographic projection replaces raw spherical coords for 1-D slicing
+    (consistent with what the model was trained with).
+  - Geodesics are great-circle arcs drawn in spherical (phi, theta) space.
+
+Usage
+-----
+    python plot_world_pair_torch.py \\
+        --model_dir  /path/to/saved/model \\
+        --pop_tiff   /path/to/pop-15min.tif \\
+        --num_samples 5 \\
+        --out_dir    ./plots
+"""
+
 import argparse
 import os
 import pickle
@@ -6,9 +27,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 plt.style.use('bmh')
 
-from Data.world_pair_data import load_world_locations, WorldPairDataset
+from world_pair_data import load_world_locations, WorldPairDataset
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def sample_one_pair(n_supply: int, n_demand: int,
                     supply_bernoulli_p: float = 0.5,
@@ -47,6 +71,10 @@ def euclidean_to_spherical(xyz: np.ndarray):
     theta = np.arccos(z.clip(-1.0, 1.0))
     return np.stack([phi, theta], axis=1)
 
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
 
 def plot_transport(
     a: np.ndarray,
@@ -94,10 +122,15 @@ def plot_transport(
         s=6, color='k', zorder=10, label='supply',
     )
 
-    # Draw geodesic arc for each demand point
-    n_demand = len(b)
-    for j in range(n_demand):
-        arc_euc = great_circle_path(demand_euc[j], demand_to_supply_euc[j])
+    # Draw geodesic arc — subsample demand points for speed/memory
+    # Drawing all 10k arcs is slow and visually redundant; 2000 is enough
+    n_demand   = len(b)
+    max_arcs   = min(n_demand, 2000)
+    rng_plot   = np.random.default_rng(42)
+    arc_idxs   = rng_plot.choice(n_demand, size=max_arcs, replace=False)
+
+    for j in arc_idxs:
+        arc_euc = great_circle_path(demand_euc[j], demand_to_supply_euc[j], n_pts=100)
         arc_sph = euclidean_to_spherical(arc_euc)
 
         # Remove wrap-around discontinuities (|Δphi| > 0.1)
@@ -153,6 +186,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
+    # ── Load locations ────────────────────────────────────────────────────
     print("Loading world locations …")
     supply_sph, supply_euc, demand_sph, demand_euc = load_world_locations(
         args.pop_tiff,
@@ -161,13 +195,22 @@ def main():
         seed=args.seed,
     )
 
-    # Landmask for background (uniform-over-landmass raster)
+    # Landmask for background — downsample to avoid OOM (same logic as world_pair_data.py)
     import rasterio
-    src      = rasterio.open(args.pop_tiff)
-    P_raster = src.read(1).astype(np.float64)
-    P_raster[P_raster < 0] = 0.0
-    landmask = (P_raster > 0).astype(np.float64)
+    from rasterio.enums import Resampling
+    with rasterio.open(args.pop_tiff) as _src:
+        _nodata  = _src.nodata
+        _out_h   = max(1, _src.height // 4)
+        _out_w   = max(1, _src.width  // 4)
+        _raw = _src.read(1, out_shape=(_out_h, _out_w),
+                         resampling=Resampling.average).astype(np.float64)
+    if _nodata is not None:
+        _raw[np.isclose(_raw, _nodata, rtol=1e-3)] = 0.0
+    _raw[~np.isfinite(_raw)] = 0.0
+    _raw[_raw < 0] = 0.0
+    landmask = (_raw > 0).astype(np.float32)   # float32 saves memory
 
+    # ── Load trained model ────────────────────────────────────────────────
     print(f"Loading model from {args.model_dir} …")
     model_pkl = os.path.join(args.model_dir, 'model.pkl')
     if os.path.exists(model_pkl):
@@ -176,7 +219,7 @@ def main():
     else:
         # Fallback: load alpha/beta .npy and rebuild model
         from cfg import init_cfg
-        from Solvers.OT_Regression_Sliced_World import OT_Regression_Sliced_World
+        from OT_Regression_Sliced_World import OT_Regression_Sliced_World
 
         cfg_m   = init_cfg("OT_Regression_Sliced_World")
         cfg_proj = type('cfg_proj', (), {'log_folder': args.model_dir})()
@@ -187,7 +230,7 @@ def main():
         model.beta  = np.load(os.path.join(args.model_dir, 'beta.npy'))
 
     # Precompute cost matrix (shared across samples)
-    from Solvers.OT_Regression_Sliced_World import _sphere_cost
+    from OT_Regression_Sliced_World import _sphere_cost
     C = _sphere_cost(supply_euc, demand_euc)   # (n_supply, n_demand)
 
     # ── Plot each sample ──────────────────────────────────────────────────
