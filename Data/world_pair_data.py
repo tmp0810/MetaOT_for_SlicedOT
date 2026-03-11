@@ -8,21 +8,36 @@ def load_world_locations(
     n_supply: int = 100,
     n_demand: int = 10_000,
     seed: int = 0,
+    downsample: int = 4,
 ):
+    
     import rasterio
+    from rasterio.enums import Resampling
 
-    src  = rasterio.open(population_fname)
-    P    = src.read(1).astype(np.float64)
+    with rasterio.open(population_fname) as src:
+        full_h, full_w = src.height, src.width
+        out_h = max(1, full_h // downsample)
+        out_w = max(1, full_w // downsample)
+
+        print(f"  Raster: {full_h}×{full_w}  → downsampled to {out_h}×{out_w}  "
+              f"({out_h * out_w * 8 / 1e9:.2f} GB float64)")
+
+        # Read with spatial downsampling — avoids allocating full raster
+        P = src.read(
+            1,
+            out_shape=(1, out_h, out_w),
+            resampling=Resampling.average,
+        )[0].astype(np.float64)   # (out_h, out_w)
+
     P[P < 0] = 0.0
 
     # Population distribution (for demand)
     Pflat = P.ravel()
-    Pflat = Pflat / Pflat.max()          # numerical stability
+    Pflat = Pflat / Pflat.max()     # numerical stability
     Pflat = Pflat / Pflat.sum()
 
-    # Uniform-over-landmass distribution (for supply)
-    Uflat = Pflat.copy()
-    Uflat[Uflat > 0] = 1.0
+    # Uniform-over-landmass (for supply)
+    Uflat = (Pflat > 0).astype(np.float64)
     Uflat /= Uflat.sum()
 
     def _sample(p, num_samples, rng_seed):
@@ -30,16 +45,14 @@ def load_world_locations(
         idxs     = rng.choice(len(p), p=p, size=num_samples)
         row, col = np.divmod(idxs, P.shape[1])
 
-        # Map pixel → spherical angles
-        theta = (1.0 - row / P.shape[0]) * np.pi          # colatitude [0, π]
-        phi   = (col / P.shape[1]) * 2 * np.pi - np.pi    # longitude  [-π, π]
+        theta = (1.0 - row / P.shape[0]) * np.pi       # colatitude [0, π]
+        phi   = (col / P.shape[1]) * 2 * np.pi - np.pi # longitude  [-π, π]
 
-        spherical  = np.stack([phi, theta], axis=1)        # (n, 2)
-        # Spherical → euclidean (standard physics convention)
+        spherical = np.stack([phi, theta], axis=1)       # (n, 2)
         x = np.sin(theta) * np.cos(phi)
         y = np.sin(theta) * np.sin(phi)
         z = np.cos(theta)
-        euclidean  = np.stack([x, y, z], axis=1)           # (n, 3)
+        euclidean = np.stack([x, y, z], axis=1)          # (n, 3)
         return spherical, euclidean
 
     demand_sph, demand_euc = _sample(Pflat, n_demand, seed)
@@ -47,8 +60,8 @@ def load_world_locations(
 
     return supply_sph, supply_euc, demand_sph, demand_euc
 
-
 class WorldPairDataset(IterableDataset):
+
     def __init__(
         self,
         n_supply: int = 100,
@@ -99,6 +112,13 @@ def get_world_pair_dataloader(
     seed: int       = 42,
     num_workers: int = 0,
 ) -> DataLoader:
+    """
+    Build a DataLoader that streams WorldPair samples.
+
+    Each batch: (dummy, dummy, supply_w, demand_w)
+      supply_w : (batch, n_supply)
+      demand_w : (batch, n_demand)
+    """
     dataset = WorldPairDataset(
         n_supply=n_supply,
         n_demand=n_demand,
