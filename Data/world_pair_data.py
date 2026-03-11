@@ -62,14 +62,23 @@ def load_world_locations(
               f"({out_h * out_w * 8 / 1e9:.2f} GB float64)")
 
         # Read with spatial downsampling — avoids allocating full raster
-        P = src.read(
+        raw = src.read(
             1,
             out_shape=(1, out_h, out_w),
             resampling=Resampling.average,
         )[0].astype(np.float64)   # (out_h, out_w)
 
-    P[~np.isfinite(P)] = 0.0   # nodata / NaN / inf → 0
+        nodata = src.nodata   # e.g. -9999, -3.4e+38, or None
+
+    # Mask out nodata values before anything else
+    P = raw.copy()
+    if nodata is not None:
+        P[np.isclose(P, nodata, rtol=1e-3)] = 0.0
+    P[~np.isfinite(P)] = 0.0   # NaN / inf → 0
     P[P < 0] = 0.0
+
+    print(f"  After cleaning: nonzero pixels = {(P > 0).sum():,} / {P.size:,}  "
+          f"max={P.max():.4f}  nodata_value={nodata}")
 
     # Population distribution (for demand)
     Pflat = P.ravel().copy()
