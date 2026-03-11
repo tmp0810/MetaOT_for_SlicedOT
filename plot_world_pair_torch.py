@@ -1,24 +1,3 @@
-"""
-plot_world_pair_torch.py
-========================
-Adapted from meta_ot/plot_world_pair.py.
-
-Changes vs. original:
-  - JAX/OTT replaced with PyTorch + POT.
-  - Uses OT_Regression_Sliced_World instead of the meta-OT MLP solver.
-  - Stereographic projection replaces raw spherical coords for 1-D slicing
-    (consistent with what the model was trained with).
-  - Geodesics are great-circle arcs drawn in spherical (phi, theta) space.
-
-Usage
------
-    python plot_world_pair_torch.py \\
-        --model_dir  /path/to/saved/model \\
-        --pop_tiff   /path/to/pop-15min.tif \\
-        --num_samples 5 \\
-        --out_dir    ./plots
-"""
-
 import argparse
 import os
 import pickle
@@ -29,15 +8,9 @@ plt.style.use('bmh')
 
 from Data.world_pair_data import load_world_locations, WorldPairDataset
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def sample_one_pair(n_supply: int, n_demand: int,
                     supply_bernoulli_p: float = 0.5,
                     seed: int = 0):
-    """Sample a single (supply_weights, demand_weights) pair."""
     rng = np.random.default_rng(seed)
     mask     = rng.binomial(1, supply_bernoulli_p, n_supply).astype(np.float64)
     supply_w = mask * rng.uniform(0.0, 1.0, n_supply)
@@ -51,13 +24,6 @@ def sample_one_pair(n_supply: int, n_demand: int,
 
 
 def great_circle_path(p0: np.ndarray, p1: np.ndarray, n_pts: int = 300):
-    """
-    Compute a great-circle arc between two euclidean unit-sphere points.
-
-    Returns
-    -------
-    arc : (n_pts, 3)  euclidean points along the arc
-    """
     t   = np.linspace(0.0, 1.0, n_pts)[:, None]
     arc = (1.0 - t) * p0[None, :] + t * p1[None, :]
     nrm = np.linalg.norm(arc, axis=1, keepdims=True).clip(1e-12)
@@ -65,16 +31,11 @@ def great_circle_path(p0: np.ndarray, p1: np.ndarray, n_pts: int = 300):
 
 
 def euclidean_to_spherical(xyz: np.ndarray):
-    """(n, 3) → (n, 2)  [phi, theta] in [-π,π] × [0,π]."""
     x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
     phi   = np.arctan2(y, x)
     theta = np.arccos(z.clip(-1.0, 1.0))
     return np.stack([phi, theta], axis=1)
 
-
-# ---------------------------------------------------------------------------
-# Plotting
-# ---------------------------------------------------------------------------
 
 def plot_transport(
     a: np.ndarray,
@@ -87,21 +48,6 @@ def plot_transport(
     title: str,
     out_path: str,
 ):
-    """
-    Draw transport plan as geodesic arcs on a cylindrical map projection.
-
-    Parameters
-    ----------
-    a, b         : supply/demand weights
-    P            : (n_supply, n_demand)  transport plan
-    supply_euc   : (n_supply, 3)  euclidean supply locations
-    demand_euc   : (n_demand, 3)  euclidean demand locations
-    supply_sph   : (n_supply, 2)  [phi, theta] for supply (for dots)
-    landmask     : 2-D raster for background (population or uniform)
-    title        : plot title / filename tag
-    out_path     : output .pdf path
-    """
-    # For each demand point: assign to argmax supply (hardest assignment)
     T = P.argmax(axis=0)                              # (n_demand,)
     demand_to_supply_euc = supply_euc[T]              # (n_demand, 3)
 
@@ -154,20 +100,12 @@ def plot_transport(
     print(f"  Saved → {out_path}")
 
 
-# ---------------------------------------------------------------------------
-# Baseline: exact Sinkhorn via POT
-# ---------------------------------------------------------------------------
-
 def solve_ot_pot(a, b, C, reg=0.1, num_iter=1000):
     """Solve regularised OT with POT (CPU). Returns (n_supply, n_demand) plan."""
     import ot
     P = ot.sinkhorn(a, b, C, reg=reg, numItermax=num_iter, stopThr=1e-9)
     return P
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser()
@@ -186,7 +124,6 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # ── Load locations ────────────────────────────────────────────────────
     print("Loading world locations …")
     supply_sph, supply_euc, demand_sph, demand_euc = load_world_locations(
         args.pop_tiff,
