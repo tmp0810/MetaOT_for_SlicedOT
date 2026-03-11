@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
+from Solvers.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
 from regression_OT_utils import (
     generate_uniform_unit_sphere_projections,
     emd1D_dual,
