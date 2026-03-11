@@ -230,7 +230,7 @@ def main():
         model.beta  = np.load(os.path.join(args.model_dir, 'beta.npy'))
 
     # Precompute cost matrix (shared across samples)
-    from OT_Regression_Sliced_World import _sphere_cost
+    from Solvers.OT_Regression_Sliced_World import _sphere_cost
     C = _sphere_cost(supply_euc, demand_euc)   # (n_supply, n_demand)
 
     # ── Plot each sample ──────────────────────────────────────────────────
