@@ -62,7 +62,10 @@ def load_world_locations(
         idxs     = rng.choice(len(p), p=p, size=num_samples)
         row, col = np.divmod(idxs, P.shape[1])
 
-        theta = (1.0 - row / P.shape[0]) * np.pi       # colatitude [0, π]
+        #theta = (1.0 - row / P.shape[0]) * np.pi       # colatitude [0, π]
+
+        # Sửa
+        theta = (row / P.shape[0]) * np.pi
         phi   = (col / P.shape[1]) * 2 * np.pi - np.pi # longitude  [-π, π]
 
         spherical = np.stack([phi, theta], axis=1)       # (n, 2)
