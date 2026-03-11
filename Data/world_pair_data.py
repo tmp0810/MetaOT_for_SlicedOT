@@ -62,13 +62,13 @@ def load_world_locations(
               f"({out_h * out_w * 8 / 1e9:.2f} GB float64)")
 
         # Read with spatial downsampling — avoids allocating full raster
+        nodata = src.nodata   # e.g. -9999, -3.4e+38, or None
+        # out_shape must be (bands, height, width)
         raw = src.read(
             1,
-            out_shape=(1, out_h, out_w),
+            out_shape=(out_h, out_w),
             resampling=Resampling.average,
-        )[0].astype(np.float64)   # (out_h, out_w)
-
-        nodata = src.nodata   # e.g. -9999, -3.4e+38, or None
+        ).astype(np.float64)   # (out_h, out_w)
 
     # Mask out nodata values before anything else
     P = raw.copy()
