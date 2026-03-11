@@ -32,7 +32,7 @@ def init_cfg(n_solver):
     elif n_solver == "OT_Regression_Sliced_World":
         cfg_m.insert("num_bootstrap", 50)       # M: training pairs
         cfg_m.insert("num_projections", 500)     # L: stereographic 1-D directions
-        cfg_m.insert("ridge", 1e-3)
+        cfg_m.insert("ridge", 0.05)
         cfg_m.insert("n_supply", 100)            # number of supply locations
         cfg_m.insert("n_demand", 10_000)         # number of demand locations
         cfg_m.insert("supply_bernoulli_p", 0.5)  # sparsity of supply weights
