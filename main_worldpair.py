@@ -75,20 +75,14 @@ def main():
         demand_sph = demand_sph,
     )
 
-    # ── Train ─────────────────────────────────────────────────────────────
     print(f"\nFitting on M={M} pairs …")
     model.train(train_loader)
-
-    # ── Save ──────────────────────────────────────────────────────────────
-    # alpha/beta already saved to model.log_sub_folder by _fit()
-    # Also save full model to args.out_dir for plot_world_pair_torch.py
     model_path = os.path.join(args.out_dir, 'model.pkl')
     with open(model_path, 'wb') as f:
         pickle.dump(model, f)
     print(f"\nModel saved → {model_path}")
     print(f"alpha/beta also saved → {model.log_sub_folder}/")
 
-    # ── Sanity check ──────────────────────────────────────────────────────
     print("\nSanity check: predict plan for one test pair …")
     rng    = np.random.default_rng(args.seed + 999)
     mask   = rng.binomial(1, 0.5, args.n_supply).astype(np.float64)
@@ -99,9 +93,18 @@ def main():
     test_b  = rng.uniform(0, 1, args.n_demand).astype(np.float64)
     test_b /= test_b.sum()
 
-    P = model.predict_plan(test_a, test_b)
-    print(f"  Plan shape: {P.shape}  sum={P.sum():.4f}  "
-          f"max={P.max():.6f}  nonzero={np.sum(P > 1e-10)}")
+    P_pred = model.predict_plan(test_a, test_b)
+
+    f_gt, g_gt = model._solve_entropic_ot(test_a, test_b)
+    P_gt = model._potentials_to_plan(test_a, test_b, f_gt, g_gt)
+
+    rmse_P = float(np.sqrt(np.mean((P_pred - P_gt) ** 2)))
+
+    print(f"  Plan shape: {P_pred.shape}  sum={P_pred.sum():.4f}  "
+          f"max={P_pred.max():.6f}  nonzero={np.sum(P_pred > 1e-10)}")
+    
+    print(f"  RMSE_Plan: {rmse_P:.8f} | plan_sum_gt={P_gt.sum():.4f}  plan_sum_pred={P_pred.sum():.4f}")
+    
     print("\nDone. Run plot_world_pair_torch.py to visualise results.")
 
 
