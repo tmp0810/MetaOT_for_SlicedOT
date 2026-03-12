@@ -77,7 +77,7 @@ def main():
     )
 
     print(f"\nFitting on M={M} pairs …")
-     start_train = time.perf_counter()
+    start_train = time.perf_counter()
     
     model.train(train_loader)
     
