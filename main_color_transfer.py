@@ -1,23 +1,3 @@
-"""
-main_color_transfer.py
-=======================
-Train OT_Regression_Sliced_Color on a folder of paintings.
-
-Usage
------
-    python main_color_transfer.py \\
-        --data_dir  ./paintings \\
-        --out_dir   ./runs/color_transfer \\
-        --gpu       0
-
-    # Faster test run:
-    python main_color_transfer.py \\
-        --data_dir    ./paintings \\
-        --n_clusters  200 \\
-        --num_bootstrap 30 \\
-        --gpu         0
-"""
-
 import argparse
 import os
 import pickle
