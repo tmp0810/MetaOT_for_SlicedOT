@@ -1,38 +1,3 @@
-"""
-eval_color_transfer.py
-=======================
-Evaluate and visualise OT_Regression_Sliced_Color for image color transfer.
-Adapted from meta_ot/eval_color.py (JAX+OTT) -> pure PyTorch + POT.
-
-For each test pair:
-  1.  Quantize source and target images (KMeans, full resolution for labels).
-  2.  Predict transport plan with the trained OT Regression model  (fast).
-  3.  Apply barycentric color transfer.
-  4.  Optionally compare with a Sinkhorn baseline (POT, slow but accurate).
-  5.  Save side-by-side PNG:  Source | OT Regression | Sinkhorn | Target.
-  6.  Print timing speedup summary.
-
-Usage
------
-    # Basic (10 random pairs, with Sinkhorn baseline for comparison):
-    python eval_color_transfer.py \\
-        --model_path ./runs/color_transfer/model.pkl \\
-        --data_dir   ./paintings \\
-        --out_dir    ./results/color_transfer
-
-    # Fast (no baseline):
-    python eval_color_transfer.py \\
-        --model_path ./runs/color_transfer/model.pkl \\
-        --data_dir   ./paintings \\
-        --no_baseline
-
-    # Specific pair:
-    python eval_color_transfer.py \\
-        --model_path ./runs/color_transfer/model.pkl \\
-        --src ./paintings/ste_victoire.jpg \\
-        --tgt ./paintings/starry_night.jpg
-"""
-
 import argparse
 import os
 import glob
@@ -47,28 +12,7 @@ from sklearn.cluster import MiniBatchKMeans
 plt.style.use('bmh')
 
 
-# ---------------------------------------------------------------------------
-# Quantize for evaluation (uses FULL-resolution image for labels)
-# ---------------------------------------------------------------------------
-
 def quantize_for_eval(img_path: str, n_clusters: int = 500, seed: int = 0):
-    """
-    Quantize image at FULL resolution so the per-pixel labels can be used
-    to remap every pixel during color transfer.
-
-    Parameters
-    ----------
-    img_path  : path to image
-    n_clusters: number of clusters
-    seed      : KMeans random seed
-
-    Returns
-    -------
-    img       : (H, W, 3) uint8    original image
-    weights   : (n_clusters,) float64  normalised histogram
-    centroids : (n_clusters, 3) float64  cluster centers in [0, 1]
-    labels    : (H*W,) int64   per-pixel cluster index
-    """
     img     = np.array(Image.open(img_path).convert('RGB'))
     H, W, _ = img.shape
     X       = img.reshape(-1, 3).astype(np.float32) / 255.0
@@ -86,9 +30,6 @@ def quantize_for_eval(img_path: str, n_clusters: int = 500, seed: int = 0):
     return img, weights, centroids, labels
 
 
-# ---------------------------------------------------------------------------
-# Apply transport plan to image
-# ---------------------------------------------------------------------------
 
 def apply_color_transfer(
     src_img:      np.ndarray,
@@ -96,33 +37,12 @@ def apply_color_transfer(
     tgt_centroids: np.ndarray,
     P:            np.ndarray,
 ) -> np.ndarray:
-    """
-    Remap each source pixel using a soft (barycentric) transport plan.
-
-    For each source cluster i:
-        c_new[i] = (P[i, :] / sum_j P[i,j]) @ tgt_centroids
-
-    Parameters
-    ----------
-    src_img       : (H, W, 3) uint8   original source image (shape only)
-    src_labels    : (H*W,) int        per-pixel source cluster index
-    tgt_centroids : (n_tgt, 3) float64 target cluster centers in [0, 1]
-    P             : (n_src, n_tgt)    transport plan
-
-    Returns
-    -------
-    result : (H, W, 3) uint8
-    """
     row_sums      = P.sum(axis=1, keepdims=True).clip(1e-12, None)
     P_row         = P / row_sums                          # row-stochastic
     new_centroids = P_row @ tgt_centroids                 # (n_src, 3) in [0,1]
     new_pixels    = new_centroids[src_labels]             # (H*W, 3)
     return (np.clip(new_pixels, 0, 1) * 255).astype(np.uint8).reshape(src_img.shape)
 
-
-# ---------------------------------------------------------------------------
-# Sinkhorn baseline (POT)
-# ---------------------------------------------------------------------------
 
 def solve_sinkhorn_baseline(
     a: np.ndarray,
@@ -131,16 +51,12 @@ def solve_sinkhorn_baseline(
     reg: float = 0.5,
     num_iter: int = 1000,
 ) -> np.ndarray:
-    """Regularised OT via POT Sinkhorn (numpy, CPU)."""
     return ot.sinkhorn(
         a, b, C, reg=reg,
         numItermax=num_iter, stopThr=1e-9, log=False,
     )
 
 
-# ---------------------------------------------------------------------------
-# Evaluate one image pair
-# ---------------------------------------------------------------------------
 
 def eval_pair(
     model,
@@ -151,13 +67,7 @@ def eval_pair(
     run_baseline: bool = True,
     seed:         int  = 0,
 ):
-    """
-    Run color transfer for one source→target pair, save PNG comparison.
 
-    Returns
-    -------
-    timings : dict  e.g. {'regression': 0.12, 'sinkhorn': 4.5}
-    """
     # ── Quantize (full-res for src labels, smaller ok for tgt centroid fitting)
     src_img, src_w, src_c, src_labels = quantize_for_eval(src_path, n_clusters, seed)
     tgt_img, tgt_w, tgt_c, _         = quantize_for_eval(tgt_path, n_clusters, seed)
@@ -218,9 +128,6 @@ def eval_pair(
     return timings
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser()
