@@ -1,6 +1,7 @@
 import argparse
 import os
 import pickle
+import time
 
 import numpy as np
 import torch
@@ -76,7 +77,15 @@ def main():
     )
 
     print(f"\nFitting on M={M} pairs …")
+     start_train = time.perf_counter()
+    
     model.train(train_loader)
+    
+    # Chốt giờ Training
+    end_train = time.perf_counter()
+    total_train_time = end_train - start_train
+    
+    print(f"\n[!] Tổng thời gian Training (Tạo data + Giải Alpha/Beta): {total_train_time:.2f} giây")
     model_path = os.path.join(args.out_dir, 'model.pkl')
     with open(model_path, 'wb') as f:
         pickle.dump(model, f)
