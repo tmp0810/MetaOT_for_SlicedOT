@@ -102,10 +102,16 @@ def main():
     test_b  = rng.uniform(0, 1, args.n_demand).astype(np.float64)
     test_b /= test_b.sum()
 
+    _ = model.predict_plan(test_a, test_b)
+    
+    start_ours = time.perf_counter()
     P_pred = model.predict_plan(test_a, test_b)
+    time_ours = time.perf_counter() - start_ours
 
+    start_sinkhorn = time.perf_counter()
     f_gt, g_gt = model._solve_entropic_ot(test_a, test_b)
     P_gt = model._potentials_to_plan(test_a, test_b, f_gt, g_gt)
+    time_sinkhorn = time.perf_counter() - start_sinkhorn
 
     rmse_P = float(np.sqrt(np.mean((P_pred - P_gt) ** 2)))
 
@@ -113,6 +119,10 @@ def main():
           f"max={P_pred.max():.6f}  nonzero={np.sum(P_pred > 1e-10)}")
     
     print(f"  RMSE_Plan: {rmse_P:.8f} | plan_sum_gt={P_gt.sum():.4f}  plan_sum_pred={P_pred.sum():.4f}")
+
+    print("-" * 50)
+    print(f"  Thời gian Sinkhorn   : {time_sinkhorn:.5f} giây")
+    print(f"  Thời gian Regression : {time_ours:.5f} giây")
     
     print("\nDone. Run plot_world_pair_torch.py to visualise results.")
 
