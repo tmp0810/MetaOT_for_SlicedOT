@@ -1,32 +1,3 @@
-"""
-OT_Regression_Sliced_Color.py
-==============================
-Subclass of OT_Regression_Sliced adapted for the color transfer experiment.
-
-Key differences from parent (MNIST) and sibling (WorldPair):
-
-  ┌─────────────────────┬─────────────────────┬─────────────────────────────┐
-  │                     │ MNIST               │ Color                       │
-  ├─────────────────────┼─────────────────────┼─────────────────────────────┤
-  │ Support             │ shared 28×28 grid   │ per-pair KMeans centroids   │
-  │ Cost matrix         │ fixed (n×n)         │ computed fresh each pair    │
-  │ Projection space    │ R^2 (pixel coords)  │ R^3 (RGB space)             │
-  │ Source ≠ target sup │ No                  │ Yes                         │
-  └─────────────────────┴─────────────────────┴─────────────────────────────┘
-
-Pipeline
---------
-1.  Load paired images, quantize each to n_clusters KMeans centroids.
-2.  Compute squared-Euclidean cost C (n_src × n_tgt) in [0,1]^3.
-3.  Solve entropic OT (log-space Sinkhorn) → raw potentials f_gt, g_gt.
-4.  Remove log-density component: f_clean = f_gt - ε·log(a)  (Bug fix).
-5.  Project RGB centroids onto L directions in R^3 via emd1D_dual
-    → feature matrices Xf (n_src, L), Xg (n_tgt, L).
-6.  Ridge regression: α = (Φ_f^T Φ_f + λI)^{-1} Φ_f^T y_f  (and β).
-7.  Predict: f_transport = Xf @ α,  f_pred = f_transport + ε·log(a).
-8.  Plan: P_ij ∝ exp((f_i + g_j - C_ij) / ε).
-"""
-
 import os
 import numpy as np
 import torch
@@ -40,17 +11,6 @@ from regression_OT_utils import (
 
 
 class OT_Regression_Sliced_Color(OT_Regression_Sliced):
-    """
-    Regression-based amortised OT for color transfer.
-
-    Support   : RGB color centroids in [0,1]^3  (different per pair)
-    Cost      : squared Euclidean distance in R^3
-    Features  : 1-D sliced-OT potentials along L random directions in R^3
-    """
-
-    # ------------------------------------------------------------------
-    # Init — override projection dimension 2 → 3
-    # ------------------------------------------------------------------
 
     def _build_grid(self):
         """No fixed pixel grid — support varies per pair."""
@@ -74,33 +34,15 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             f"dim=3 (RGB), L={L}"
         )
 
-    # ------------------------------------------------------------------
-    # Cost matrix
-    # ------------------------------------------------------------------
 
     def _compute_cost(
         self,
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-        """
-        Squared Euclidean cost in RGB space.
-
-        Parameters
-        ----------
-        x_src : (n_src, 3)  source centroids in [0, 1]
-        x_tgt : (n_tgt, 3)  target centroids in [0, 1]
-
-        Returns
-        -------
-        C : (n_src, n_tgt)
-        """
+      
         diff = x_src[:, None, :] - x_tgt[None, :, :]   # (n_src, n_tgt, 3)
         return np.sum(diff ** 2, axis=-1)
-
-    # ------------------------------------------------------------------
-    # Entropic OT — accepts explicit cost matrix (per-pair C)
-    # ------------------------------------------------------------------
 
     def _solve_entropic_ot(
         self,
@@ -108,10 +50,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         b: np.ndarray,
         C: np.ndarray = None,
     ):
-        """
-        Log-space Sinkhorn with explicit cost matrix.
-        Overrides parent (which uses self.C).
-        """
+
         if C is None:
             raise ValueError("[Color] _solve_entropic_ot requires explicit C.")
 
@@ -140,10 +79,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
         return f, g
 
-    # ------------------------------------------------------------------
-    # Features — 3-D RGB projection
-    # ------------------------------------------------------------------
-
     def _compute_features(
         self,
         a: np.ndarray,
@@ -151,24 +86,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray = None,
         x_tgt: np.ndarray = None,
     ):
-        """
-        Sliced-OT feature matrices for one color pair.
-
-        Projects RGB centroids onto L directions in R^3 then calls
-        emd1D_dual for all L projections in one batched backward pass.
-
-        Parameters
-        ----------
-        a     : (n_src,)   source weights
-        b     : (n_tgt,)   target weights
-        x_src : (n_src, 3) source centroids in [0,1]
-        x_tgt : (n_tgt, 3) target centroids in [0,1]
-
-        Returns
-        -------
-        Xf : (n_src, L)   ∂W/∂a per direction
-        Xg : (n_tgt, L)   ∂W/∂b per direction
-        """
         if x_src is None or x_tgt is None:
             raise ValueError("[Color] _compute_features requires x_src and x_tgt.")
 
@@ -201,9 +118,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         Xg = g_grad.cpu().numpy().T    # (n_tgt, L)
         return Xf, Xg
 
-    # ------------------------------------------------------------------
-    # Plan recovery — accepts explicit cost matrix
-    # ------------------------------------------------------------------
 
     def _potentials_to_plan(
         self,
@@ -211,10 +125,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         g: np.ndarray,
         C: np.ndarray = None,
     ) -> np.ndarray:
-        """
-        P_ij ∝ exp((f_i + g_j - C_ij) / ε).
-        Overrides parent to accept explicit C.
-        """
         if C is None:
             raise ValueError("[Color] _potentials_to_plan requires explicit C.")
 
@@ -230,11 +140,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         if P_sum > 0:
             P /= P_sum
         return P
-
-    # ------------------------------------------------------------------
-    # Fit — custom loop (color dataloader has 4 elements, not 4-element
-    # tuple with dummy labels)
-    # ------------------------------------------------------------------
 
     def _fit(self, dataloader_train):
         """
@@ -273,10 +178,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                     self.logger.warning(f"Skipping pair {count}: {e}")
                     continue
 
-                # ── Log-density correction ─────────────────────────────
-                # f_gt ≈ ε·log(a) + transport_geometry.
-                # Remove ε·log(a) to improve regression signal/noise.
-                # At predict time we add it back (_predict_potentials_color).
                 f_clean = f_gt - eps * np.log(np.clip(a, 1e-10, None))
                 g_clean = g_gt - eps * np.log(np.clip(b, 1e-10, None))
                 f_clean -= f_clean.mean()
@@ -334,9 +235,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         self.logger.info(f"[Color] Saved alpha/beta -> {self.log_sub_folder}")
         return alpha, beta
 
-    # ------------------------------------------------------------------
-    # Predict
-    # ------------------------------------------------------------------
 
     def _predict_potentials_color(
         self,
@@ -345,14 +243,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ):
-        """
-        Predict full Kantorovich potentials for a new color pair.
-
-        1.  Compute transport-only component: Xf @ alpha
-        2.  Add back ε·log(a) to recover full Sinkhorn potential scale.
-
-        Returns potentials compatible with _potentials_to_plan.
-        """
         Xf, Xg = self._compute_features(a, b, x_src, x_tgt)
         Xf -= Xf.mean(axis=0, keepdims=True)
         Xg -= Xg.mean(axis=0, keepdims=True)
@@ -373,27 +263,9 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-        """
-        Predict transport plan P for a new color pair.
-
-        Parameters
-        ----------
-        a     : (n_src,)   source weights
-        b     : (n_tgt,)   target weights
-        x_src : (n_src, 3) source centroids in [0, 1]
-        x_tgt : (n_tgt, 3) target centroids in [0, 1]
-
-        Returns
-        -------
-        P : (n_src, n_tgt) transport plan summing to 1
-        """
         C              = self._compute_cost(x_src, x_tgt)
         f_pred, g_pred = self._predict_potentials_color(a, b, x_src, x_tgt)
         return self._potentials_to_plan(f_pred, g_pred, C)
-
-    # ------------------------------------------------------------------
-    # Train
-    # ------------------------------------------------------------------
 
     def train(self, dataloader_train):
         """Fit and save regression weights."""
