@@ -1,17 +1,3 @@
-"""
-color_transfer_data.py
-======================
-Data loading and KMeans quantization for the color transfer experiment.
-
-Each image is quantized once → (weights, centroids).
-The dataset yields ordered (src, tgt) pairs for training OT regression.
-
-Interface
----------
-    weights  : (n_clusters,)   float64  — normalized histogram
-    centroids: (n_clusters, 3) float64  — cluster centers in [0, 1]
-"""
-
 import os
 import glob
 import numpy as np
@@ -21,33 +7,12 @@ from sklearn.cluster import MiniBatchKMeans
 from PIL import Image
 
 
-# ---------------------------------------------------------------------------
-# Single-image quantization
-# ---------------------------------------------------------------------------
-
 def load_and_quantize(
     img_path: str,
     n_clusters: int = 500,
     seed: int = 0,
     max_size: int = 512,
 ):
-    """
-    Load an image, resize if needed, and quantize colors via MiniBatchKMeans.
-
-    Parameters
-    ----------
-    img_path   : path to image (JPG / PNG / …)
-    n_clusters : number of KMeans clusters  (= support size of the histogram)
-    seed       : random seed for reproducibility
-    max_size   : downsample so max(H, W) <= max_size before clustering
-
-    Returns
-    -------
-    weights   : (n_clusters,)   float64  normalised histogram weights
-    centroids : (n_clusters, 3) float64  cluster centers in [0, 1]
-    labels    : (H*W,)          int64    per-pixel cluster index
-    orig_shape: (H, W)          int      shape of the (possibly resized) image
-    """
     img = Image.open(img_path).convert('RGB')
     w, h = img.size
     if max(w, h) > max_size:
@@ -74,24 +39,8 @@ def load_and_quantize(
     return weights, centroids, labels, orig_shape
 
 
-# ---------------------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------------------
 
 class ColorTransferDataset(Dataset):
-    """
-    Dataset of ordered image pairs for training OT regression.
-
-    All images are pre-quantized at construction time and cached.
-    Pairs are all ordered (i, j) with i != j, optionally subsampled.
-
-    __getitem__ yields:
-        src_weights   : (n_clusters,)   float64
-        src_centroids : (n_clusters, 3) float64 in [0, 1]
-        tgt_weights   : (n_clusters,)   float64
-        tgt_centroids : (n_clusters, 3) float64 in [0, 1]
-    """
-
     def __init__(
         self,
         image_dir: str,
@@ -141,10 +90,6 @@ class ColorTransferDataset(Dataset):
             torch.tensor(tc, dtype=torch.float64),    # (n_clusters, 3)
         )
 
-
-# ---------------------------------------------------------------------------
-# DataLoader factory
-# ---------------------------------------------------------------------------
 
 def get_color_transfer_dataloader(
     image_dir: str,
