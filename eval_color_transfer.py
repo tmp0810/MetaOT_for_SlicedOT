@@ -84,9 +84,21 @@ def eval_pair(
     img_reg = apply_color_transfer(src_img, src_labels, tgt_c, P_reg)
 
     # ── Sinkhorn baseline ─────────────────────────────────────────────────
+    # if run_baseline:
+    #     t0      = time.time()
+    #     P_sink  = solve_sinkhorn_baseline(src_w, tgt_w, C, reg=eps)
+    #     timings['sinkhorn'] = time.time() - t0
+    #     img_sink = apply_color_transfer(src_img, src_labels, tgt_c, P_sink)
+
     if run_baseline:
         t0      = time.time()
-        P_sink  = solve_sinkhorn_baseline(src_w, tgt_w, C, reg=eps)
+        
+        # Gọi trực tiếp bộ giải Sinkhorn "bọc thép" của mô hình
+        f_sink, g_sink = model._solve_entropic_ot(src_w, tgt_w, C)
+        
+        # Dùng hàm biến điện thế thành Plan (Nhớ truyền đủ a, b, f, g, C như bạn đã sửa)
+        P_sink         = model._potentials_to_plan(src_w, tgt_w, f_sink, g_sink, C)
+        
         timings['sinkhorn'] = time.time() - t0
         img_sink = apply_color_transfer(src_img, src_labels, tgt_c, P_sink)
 
