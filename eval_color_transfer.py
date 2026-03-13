@@ -84,23 +84,28 @@ def eval_pair(
     img_reg = apply_color_transfer(src_img, src_labels, tgt_c, P_reg)
 
     # ── Sinkhorn baseline ─────────────────────────────────────────────────
-    # if run_baseline:
-    #     t0      = time.time()
-    #     P_sink  = solve_sinkhorn_baseline(src_w, tgt_w, C, reg=eps)
-    #     timings['sinkhorn'] = time.time() - t0
-    #     img_sink = apply_color_transfer(src_img, src_labels, tgt_c, P_sink)
-
     if run_baseline:
         t0      = time.time()
-        
-        # Gọi trực tiếp bộ giải Sinkhorn "bọc thép" của mô hình
-        f_sink, g_sink = model._solve_entropic_ot(src_w, tgt_w, C)
-        
-        # Dùng hàm biến điện thế thành Plan (Nhớ truyền đủ a, b, f, g, C như bạn đã sửa)
-        P_sink         = model._potentials_to_plan(src_w, tgt_w, f_sink, g_sink, C)
-        
+        P_sink  = solve_sinkhorn_baseline(src_w, tgt_w, C, reg=eps)
         timings['sinkhorn'] = time.time() - t0
         img_sink = apply_color_transfer(src_img, src_labels, tgt_c, P_sink)
+
+        rmse_P = float(np.sqrt(np.mean((P_reg - P_sink) ** 2)))
+        timings['rmse_P'] = rmse_P
+        
+        print(f"  RMSE_Plan: {rmse_P:.8f} | sum_gt={P_sink.sum():.4f} sum_pred={P_reg.sum():.4f}")
+
+    # if run_baseline:
+    #     t0      = time.time()
+        
+
+    #     f_sink, g_sink = model._solve_entropic_ot(src_w, tgt_w, C)
+        
+    #     # Dùng hàm biến điện thế thành Plan (Nhớ truyền đủ a, b, f, g, C như bạn đã sửa)
+    #     P_sink         = model._potentials_to_plan(src_w, tgt_w, f_sink, g_sink, C)
+        
+    #     timings['sinkhorn'] = time.time() - t0
+    #     img_sink = apply_color_transfer(src_img, src_labels, tgt_c, P_sink)
 
     # ── Plot ──────────────────────────────────────────────────────────────
     n_cols = 4 if run_baseline else 3
