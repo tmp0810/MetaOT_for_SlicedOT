@@ -13,13 +13,10 @@ from regression_OT_utils import (
 class OT_Regression_Sliced_Color(OT_Regression_Sliced):
 
     def _build_grid(self):
-        """No fixed pixel grid — support varies per pair."""
         self.x_grid = None
         self.C      = None
 
     def __init__(self, cfg_proj, cfg_m):
-        # super().__init__ calls _build_grid (our override → no-op) and
-        # then sets self.projection_matrix with dim=2 (from pixel space).
         super().__init__(cfg_proj, cfg_m)
 
         # Override projection directions: R^3 for RGB
@@ -149,13 +146,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         return P
 
     def _fit(self, dataloader_train):
-        """
-        Fit regression weights on color transfer pairs.
-
-        Dataloader must yield 4-tuples:
-            (src_weights, src_centroids, tgt_weights, tgt_centroids)
-            shapes: (B, n), (B, n, 3), (B, n), (B, n, 3)
-        """
         M   = self.cfg_m.num_bootstrap
         eps = self.cfg_m.epsilon
         self.logger.info(f"[Color] Fitting on M={M} pairs ...")
@@ -170,15 +160,14 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                 if count >= M:
                     break
 
-                a     = src_w[i].numpy()      # (n_src,)
-                x_src = src_c[i].numpy()      # (n_src, 3)
-                b     = tgt_w[i].numpy()      # (n_tgt,)
-                x_tgt = tgt_c[i].numpy()      # (n_tgt, 3)
+                a     = src_w[i].numpy()     
+                x_src = src_c[i].numpy()    
+                b     = tgt_w[i].numpy()     
+                x_tgt = tgt_c[i].numpy()     
 
                 # Per-pair cost matrix (n_src, n_tgt)
                 C = self._compute_cost(x_src, x_tgt)
 
-                # Ground-truth Sinkhorn potentials
                 try:
                     f_gt, g_gt = self._solve_entropic_ot(a, b, C)
                 except RuntimeError as e:
