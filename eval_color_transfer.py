@@ -226,6 +226,11 @@ def main():
         if 'sinkhorn' in timings:
             all_timings['sinkhorn'].append(timings['sinkhorn'])
 
+        if 'rmse_P' in timings:
+            if 'rmse_P' not in all_timings:
+                all_timings['rmse_P'] = []
+            all_timings['rmse_P'].append(timings['rmse_P'])
+
     # ── Summary ───────────────────────────────────────────────────────────
     if all_timings['regression']:
         r = np.array(all_timings['regression'])
@@ -237,6 +242,10 @@ def main():
             s = np.array(all_timings['sinkhorn'])
             print(f"Sinkhorn      : {s.mean():.3f}s +/- {s.std():.3f}s")
             print(f"Speedup       : {s.mean()/r.mean():.1f}x")
+        if 'rmse_P' in all_timings:
+            rmse_arr = np.array(all_timings['rmse_P'])
+            print(f"RMSE_Plan     : {rmse_arr.mean():.8f} +/- {rmse_arr.std():.8f}")
+            
         print(f"\nAll results saved to: {args.out_dir}")
 
 
