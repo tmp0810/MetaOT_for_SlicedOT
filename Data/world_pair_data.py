@@ -20,16 +20,13 @@ def load_world_locations(
         print(f"  Raster: {full_h}×{full_w}  → downsampled to {out_h}×{out_w}  "
               f"({out_h * out_w * 8 / 1e9:.2f} GB float64)")
 
-        # Read with spatial downsampling — avoids allocating full raster
         nodata = src.nodata   # e.g. -9999, -3.4e+38, or None
-        # out_shape must be (bands, height, width)
         raw = src.read(
             1,
             out_shape=(out_h, out_w),
             resampling=Resampling.average,
         ).astype(np.float64)   # (out_h, out_w)
 
-    # Mask out nodata values before anything else
     P = raw.copy()
     if nodata is not None:
         P[np.isclose(P, nodata, rtol=1e-3)] = 0.0
@@ -39,7 +36,6 @@ def load_world_locations(
     print(f"  After cleaning: nonzero pixels = {(P > 0).sum():,} / {P.size:,}  "
           f"max={P.max():.4f}  nodata_value={nodata}")
 
-    # Population distribution (for demand)
     Pflat = P.ravel().copy()
     p_max = Pflat.max()
     if p_max <= 0:
@@ -47,10 +43,9 @@ def load_world_locations(
             f"Population raster is all-zero after cleaning. "
             f"Check that {population_fname} is a valid population tiff."
         )
-    Pflat /= p_max           # numerical stability
+    Pflat /= p_max           
     Pflat /= Pflat.sum()
 
-    # Uniform-over-landmass (for supply)
     Uflat = (Pflat > 0).astype(np.float64)
     u_sum = Uflat.sum()
     if u_sum <= 0:
@@ -115,10 +110,10 @@ class WorldPairDataset(IterableDataset):
             demand_w /= demand_w.sum()
 
             yield (
-                torch.zeros(1),                                         # dummy label a
-                torch.zeros(1),                                         # dummy label b
-                torch.tensor(supply_w, dtype=torch.float64),           # (n_supply,)
-                torch.tensor(demand_w, dtype=torch.float64),           # (n_demand,)
+                torch.zeros(1),                                     
+                torch.zeros(1),                                        
+                torch.tensor(supply_w, dtype=torch.float64),         
+                torch.tensor(demand_w, dtype=torch.float64),         
             )
             count += 1
 
@@ -143,10 +138,10 @@ def get_world_pair_dataloader(
     def _collate(batch):
         _, _, x_a, x_b = zip(*batch)
         return (
-            torch.zeros(len(batch)),      # dummy
-            torch.zeros(len(batch)),      # dummy
-            torch.stack(x_a),            # (B, n_supply)
-            torch.stack(x_b),            # (B, n_demand)
+            torch.zeros(len(batch)),      
+            torch.zeros(len(batch)),   
+            torch.stack(x_a),           
+            torch.stack(x_b),            
         )
 
     return DataLoader(
