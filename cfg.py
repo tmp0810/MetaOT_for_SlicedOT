@@ -45,10 +45,10 @@ def init_cfg(n_solver):
         cfg_m.insert("gpu", 0)
 
     elif n_solver == "OT_Regression_Sliced_Color":
-        cfg_m.insert("num_bootstrap", 100)       # M: training pairs
+        cfg_m.insert("num_bootstrap", 50)       # M: training pairs
         cfg_m.insert("num_projections", 200)     # L: 1-D projection dirs in R^3
         cfg_m.insert("ridge", 1e-3)
-        cfg_m.insert("n_clusters", 500)          # KMeans clusters per image
+        cfg_m.insert("n_clusters", 3000)          # KMeans clusters per image
         cfg_m.insert("img_size", 0)              # unused, kept for interface compat
         cfg_m.insert("epsilon", 0.005)
         cfg_m.insert("sinkhorn_iters", 500000)
