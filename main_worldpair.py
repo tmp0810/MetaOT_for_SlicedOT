@@ -29,13 +29,6 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     cfg_m = init_cfg("OT_Regression_Sliced_World")
-
-    # cfg_proj must satisfy Defense_Train_Base.init_env():
-    #   - cfg_proj.seed      : for torch/numpy seeding
-    #   - cfg_proj.flag_time : used in log_sub_folder path
-    #   - vars(cfg_proj)     : iterated for logging → must be a real __dict__
-    # Note: init_env uses hardcoded log_folder="inProc_data", NOT cfg_proj.log_folder.
-    # We mirror main.py's argparse namespace exactly.
     cfg_proj = argparse.Namespace(
         seed       = args.seed,
         flag_time  = strftime("%Y-%m-%d_%H-%M-%S", localtime()),
@@ -45,7 +38,6 @@ def main():
         gpu        = args.gpu,
     )
 
-    # ── Load fixed supply / demand locations ──────────────────────────────
     print("Loading world locations from population raster …")
     supply_sph, supply_euc, demand_sph, demand_euc = load_world_locations(
         args.pop_tiff,
@@ -55,7 +47,6 @@ def main():
     )
     print(f"  Supply: {supply_euc.shape}  Demand: {demand_euc.shape}")
 
-    # ── Build dataloader ──────────────────────────────────────────────────
     M = cfg_m.num_bootstrap
     train_loader = get_world_pair_dataloader(
         n_supply           = args.n_supply,
@@ -65,8 +56,7 @@ def main():
         num_pairs          = M,
         seed               = args.seed,
     )
-
-    # ── Build model ───────────────────────────────────────────────────────
+    
     model = OT_Regression_Sliced_World(
         cfg_proj   = cfg_proj,
         cfg_m      = cfg_m,
