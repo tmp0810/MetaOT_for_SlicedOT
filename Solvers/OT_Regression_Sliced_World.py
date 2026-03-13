@@ -59,12 +59,10 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
         supply_sph: np.ndarray = None,
         demand_sph: np.ndarray = None,
     ):
-        # Store locations BEFORE calling parent __init__
-        # (parent calls _build_grid which we override)
-        self.supply_euc = supply_euc.astype(np.float64)   # (n_supply, 3)
-        self.demand_euc = demand_euc.astype(np.float64)   # (n_demand, 3)
-        self.supply_sph = supply_sph                       # (n_supply, 2), for plotting
-        self.demand_sph = demand_sph                       # (n_demand, 2), for plotting
+        self.supply_euc = supply_euc.astype(np.float64)   
+        self.demand_euc = demand_euc.astype(np.float64)  
+        self.supply_sph = supply_sph                       
+        self.demand_sph = demand_sph                       
         self.n_supply   = len(supply_euc)
         self.n_demand   = len(demand_euc)
 
@@ -108,24 +106,17 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
         )
         L = self.projection_matrix.shape[0]
 
-        # Supply and demand on unit sphere as torch tensors
         supply_t = torch.tensor(self.supply_euc, dtype=torch.float64, device=device)  # (n_supply, 3)
         demand_t = torch.tensor(self.demand_euc, dtype=torch.float64, device=device)  # (n_demand, 3)
-
-        # Step 1: epsilon_projection — push north-pole points off the pole
-        # (modifies tensor in-place; returns it for convenience)
         supply_t = _epsilon_projection(supply_t)
         demand_t = _epsilon_projection(demand_t)
 
-        # Step 2: get_stereo_proj_torch — S²→R², factor-2, near-pole → inf
         stereo_supply = _get_stereo_proj_torch(supply_t)  # (n_supply, 2)
         stereo_demand = _get_stereo_proj_torch(demand_t)  # (n_demand, 2)
 
-        # Zero out any remaining inf/nan (extreme near-pole residuals)
         stereo_supply = torch.nan_to_num(stereo_supply, nan=0.0, posinf=0.0, neginf=0.0)
         stereo_demand = torch.nan_to_num(stereo_demand, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Step 3: project onto L directions → (L, n_supply), (L, n_demand)
         proj_mat = torch.tensor(self.projection_matrix, dtype=torch.float64, device=device)  # (L, 2)
         proj_supply = (stereo_supply @ proj_mat.T).T   # (L, n_supply)
         proj_demand = (stereo_demand @ proj_mat.T).T   # (L, n_demand)
@@ -149,12 +140,8 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
         f_pred, g_pred = self._predict_potentials(a, b, self.alpha, self.beta)
         return self._potentials_to_plan(a, b, f_pred, g_pred)
 
-    # ------------------------------------------------------------------
-    # Override: train — skip MNIST _evaluate, just fit
-    # ------------------------------------------------------------------
 
     def train(self, dataloader_train, dataloader_test=None):
-        """Fit regression weights. No MNIST-style geodesic evaluation."""
         self.alpha, self.beta = self._fit(dataloader_train)
         self.logger.info("[World] Training complete. Call predict_plan(a, b) to use.")
         return self.alpha, self.beta
