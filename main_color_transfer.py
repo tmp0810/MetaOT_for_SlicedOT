@@ -34,7 +34,6 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # ── Config ────────────────────────────────────────────────────────────
     cfg_m = init_cfg("OT_Regression_Sliced_Color")
     if args.n_clusters    is not None: cfg_m.n_clusters    = args.n_clusters
     if args.num_bootstrap is not None: cfg_m.num_bootstrap = args.num_bootstrap
@@ -63,7 +62,6 @@ def main():
     print(f"  ridge        : {cfg_m.ridge}")
     print(f"{'='*55}\n")
 
-    # ── Load & quantize images ─────────────────────────────────────────────
     print(f"Loading images from: {args.data_dir}")
     train_loader = get_color_transfer_dataloader(
         args.data_dir,
@@ -78,21 +76,17 @@ def main():
     print(f"  {n_images} images  →  {n_pairs} ordered pairs available "
           f"(using {cfg_m.num_bootstrap})\n")
 
-    # ── Build model ────────────────────────────────────────────────────────
     model = OT_Regression_Sliced_Color(cfg_proj, cfg_m)
 
-    # ── Train ──────────────────────────────────────────────────────────────
     print(f"Fitting ridge regression on M={cfg_m.num_bootstrap} pairs ...")
     model.train(train_loader)
 
-    # ── Save ───────────────────────────────────────────────────────────────
     model_path = os.path.join(args.out_dir, 'model.pkl')
     with open(model_path, 'wb') as f:
         pickle.dump(model, f)
     print(f"\nModel saved -> {model_path}")
     print(f"alpha/beta    -> {model.log_sub_folder}/")
 
-    # ── Quick sanity check ────────────────────────────────────────────────
     print("\nSanity check: predict plan for one test pair ...")
     dataset = train_loader.dataset
     rng     = np.random.default_rng(args.seed + 999)
