@@ -29,13 +29,11 @@ def great_circle_path(p0: np.ndarray, p1: np.ndarray, n_pts: int = 300):
     nrm = np.linalg.norm(arc, axis=1, keepdims=True).clip(1e-12)
     return arc / nrm
 
-
 def euclidean_to_spherical(xyz: np.ndarray):
     x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
     phi   = np.arctan2(y, x)
     theta = np.arccos(z.clip(-1.0, 1.0))
     return np.stack([phi, theta], axis=1)
-
 
 def plot_transport(
     a: np.ndarray,
@@ -48,8 +46,8 @@ def plot_transport(
     title: str,
     out_path: str,
 ):
-    T = P.argmax(axis=0)                              # (n_demand,)
-    demand_to_supply_euc = supply_euc[T]              # (n_demand, 3)
+    T = P.argmax(axis=0)                              
+    demand_to_supply_euc = supply_euc[T]             
 
     fig, ax = plt.subplots(figsize=(10, 5))
     colors = plt.style.library['bmh']['axes.prop_cycle'].by_key()['color']
@@ -61,15 +59,12 @@ def plot_transport(
         alpha=0.15, aspect='auto',
     )
 
-    # Supply locations (active = a > 0)
     active = a > 1e-10
     ax.scatter(
         supply_sph[active, 0], supply_sph[active, 1],
         s=6, color='k', zorder=10, label='supply',
     )
 
-    # Draw geodesic arc — subsample demand points for speed/memory
-    # Drawing all 10k arcs is slow and visually redundant; 2000 is enough
     n_demand   = len(b)
     max_arcs   = min(n_demand, 2000)
     rng_plot   = np.random.default_rng(42)
@@ -78,8 +73,6 @@ def plot_transport(
     for j in arc_idxs:
         arc_euc = great_circle_path(demand_euc[j], demand_to_supply_euc[j], n_pts=100)
         arc_sph = euclidean_to_spherical(arc_euc)
-
-        # Remove wrap-around discontinuities (|Δphi| > 0.1)
         diff = np.abs(np.diff(arc_sph[:, 0]))
         arc_sph[1:][diff > 0.1] = np.nan
 
@@ -101,7 +94,6 @@ def plot_transport(
 
 
 def solve_ot_pot(a, b, C, reg=0.1, num_iter=1000):
-    """Solve regularised OT with POT (CPU). Returns (n_supply, n_demand) plan."""
     import ot
     P = ot.sinkhorn(a, b, C, reg=reg, numItermax=num_iter, stopThr=1e-9)
     return P
@@ -132,7 +124,6 @@ def main():
         seed=args.seed,
     )
 
-    # Landmask for background — downsample to avoid OOM (same logic as world_pair_data.py)
     import rasterio
     from rasterio.enums import Resampling
     with rasterio.open(args.pop_tiff) as _src:
@@ -147,14 +138,12 @@ def main():
     _raw[_raw < 0] = 0.0
     landmask = (_raw > 0).astype(np.float32)   # float32 saves memory
 
-    # ── Load trained model ────────────────────────────────────────────────
     print(f"Loading model from {args.model_dir} …")
     model_pkl = os.path.join(args.model_dir, 'model.pkl')
     if os.path.exists(model_pkl):
         with open(model_pkl, 'rb') as f:
             model = pickle.load(f)
     else:
-        # Fallback: load alpha/beta .npy and rebuild model
         from cfg import init_cfg
         from OT_Regression_Sliced_World import OT_Regression_Sliced_World
 
@@ -166,11 +155,9 @@ def main():
         model.alpha = np.load(os.path.join(args.model_dir, 'alpha.npy'))
         model.beta  = np.load(os.path.join(args.model_dir, 'beta.npy'))
 
-    # Precompute cost matrix (shared across samples)
     from Solvers.OT_Regression_Sliced_World import _sphere_cost
     C = _sphere_cost(supply_euc, demand_euc)   # (n_supply, n_demand)
 
-    # ── Plot each sample ──────────────────────────────────────────────────
     for i in range(args.num_samples):
         print(f"\nSample {i+1}/{args.num_samples}")
         a, b = sample_one_pair(
@@ -178,7 +165,6 @@ def main():
             seed=args.seed + i,
         )
 
-        # ─ Regression model prediction ───────────────────────────────────
         P_pred = model.predict_plan(a, b)
         plot_transport(
             a, b, P_pred,
@@ -187,7 +173,6 @@ def main():
             out_path=os.path.join(args.out_dir, f'regression_{i}.pdf'),
         )
 
-        # ─ Sinkhorn baseline ─────────────────────────────────────────────
         if not args.no_baseline:
             print("  Running Sinkhorn baseline …")
             eps = getattr(model.cfg_m, 'epsilon', 0.1)
