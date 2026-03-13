@@ -47,30 +47,28 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         b: np.ndarray,
         C: np.ndarray = None,
     ):
-
         if C is None:
             raise ValueError("[Color] _solve_entropic_ot requires explicit C.")
 
-        eps = self.cfg_m.epsilon
-
-        a_safe = np.clip(a, 1e-10, None)
-        a_safe /= a_safe.sum()
-        b_safe = np.clip(b, 1e-10, None)
-        b_safe /= b_safe.sum()
-
-        log_a = np.log(a_safe)   
-        log_b = np.log(b_safe)   
-        log_K = -C / eps    
-
-        def lse(X, axis):
-            m = X.max(axis=axis, keepdims=True)
-            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+        import ot 
         
-        f = np.zeros_like(a_safe)
+        eps = self.cfg_m.epsilon
+ 
+        P_gt = ot.sinkhorn(a, b, C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=False)
+ 
+        a_safe = np.clip(a, 1e-10, None)
+        b_safe = np.clip(b, 1e-10, None)
+        
 
-        for _ in range(self.cfg_m.sinkhorn_iters):
-            g = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
-            f = eps * (log_a - lse(log_K + g[None, :] / eps, axis=1))
+        u = P_gt.sum(axis=1) / a_safe 
+        v = P_gt.sum(axis=0) / b_safe
+        
+        _, log_dict = ot.sinkhorn(a, b, C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=True)
+        u_opt = log_dict['u']
+        v_opt = log_dict['v']
+        
+        f = eps * np.log(np.clip(u_opt, 1e-300, None))
+        g = eps * np.log(np.clip(v_opt, 1e-300, None))
 
         return f, g
 
