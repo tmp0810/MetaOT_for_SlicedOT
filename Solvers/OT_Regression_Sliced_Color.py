@@ -54,29 +54,27 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         if C is None:
             raise ValueError("[Color] _solve_entropic_ot requires explicit C.")
 
-        eps    = self.cfg_m.epsilon
-        a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
-        b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
-        log_a  = np.log(a_safe)
-        log_b  = np.log(b_safe)
-        log_K  = -C / eps
+        eps = self.cfg_m.epsilon
+
+        a_safe = np.clip(a, 1e-10, None)
+        a_safe /= a_safe.sum()
+        b_safe = np.clip(b, 1e-10, None)
+        b_safe /= b_safe.sum()
+
+        log_a = np.log(a_safe)   
+        log_b = np.log(b_safe)   
+        log_K = -C / eps    
 
         def lse(X, axis):
             m = X.max(axis=axis, keepdims=True)
             return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
-
+        
         f = np.zeros_like(a_safe)
-        g = np.zeros_like(b_safe)
-        for _ in range(self.cfg_m.sinkhorn_iters):
-            g_new = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
-            f_new = eps * (log_a - lse(log_K + g_new[None, :] / eps, axis=1))
-            if np.max(np.abs(f_new - f)) < 1e-6:
-                f, g = f_new, g_new
-                break
-            f, g = f_new, g_new
 
-        if f.std() < 1e-8:
-            raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
+        for _ in range(self.cfg_m.sinkhorn_iters):
+            g = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
+            f = eps * (log_a - lse(log_K + g[None, :] / eps, axis=1))
+
         return f, g
 
     def _compute_features(
@@ -120,7 +118,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
 
 
     def _potentials_to_plan(
-        self,
+        self, a: np.ndarray, b: np.ndarray,
         f: np.ndarray,
         g: np.ndarray,
         C: np.ndarray = None,
@@ -135,10 +133,19 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         log_P = f_c[:, None] / eps - C / eps + g_c[None, :] / eps
         log_P -= log_P.max()
         P     = np.exp(log_P)
+
+        # Ép 1 bên về source a
+        r = P.sum(axis=1) + 1e-12
+        P = P * (a / r)[:, None]
+        
+        # Ép 1 bên về source b
+        c = P.sum(axis=0) + 1e-12
+        P = P * (b / c)[None, :]
+
+
         P     = np.clip(P, 0.0, None)
         P_sum = P.sum()
-        if P_sum > 0:
-            P /= P_sum
+      
         return P
 
     def _fit(self, dataloader_train):
@@ -265,7 +272,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
     ) -> np.ndarray:
         C              = self._compute_cost(x_src, x_tgt)
         f_pred, g_pred = self._predict_potentials_color(a, b, x_src, x_tgt)
-        return self._potentials_to_plan(f_pred, g_pred, C)
+        return self._potentials_to_plan(a, b, f_pred, g_pred, C)
 
     def train(self, dataloader_train):
         """Fit and save regression weights."""
