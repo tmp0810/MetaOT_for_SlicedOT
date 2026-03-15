@@ -41,7 +41,6 @@ class Meta_OT_World(Meta_OT_Color):
         dots = np.clip(dots, -1.0 + 1e-7, 1.0 - 1e-7)
         return np.arccos(dots)    # (n_src, n_tgt)
 
-
     def _sphere_project(self, x: torch.Tensor) -> torch.Tensor:
         """Project R³ points onto the unit sphere S²."""
         nrm = x.norm(dim=-1, keepdim=True).clamp(min=1e-12)
@@ -55,7 +54,6 @@ class Meta_OT_World(Meta_OT_Color):
         Y: torch.Tensor,     # (n_Y, 3)
         cycle_weight: float,
     ) -> torch.Tensor:
-        # ── Dual term ─────────────────────────────────────────────────
         T_conj_Y_raw = self.D_conj._push_gs(Y, D_conj_params, create_graph=True)
         T_conj_Y     = self._sphere_project(T_conj_Y_raw)
         T_conj_Y_det = T_conj_Y.detach()
@@ -174,7 +172,7 @@ class Meta_OT_World(Meta_OT_Color):
                 # ── Subsample demand for encoder (speed + capacity) ────
                 # Full n_demand=10000 overwhelms the encoder (128-dim embedding
                 # for 10k points = 0.013 bits/point). Subsample to enc_demand_n.
-                enc_demand_n = getattr(cfg, 'enc_demand_subsample', 1000)
+                enc_demand_n = cfg.get('enc_demand_subsample') or 1000
                 if n_demand > enc_demand_n:
                     enc_idx  = torch.randperm(n_demand, device=device)[:enc_demand_n]
                     dc_enc   = dc[:, enc_idx, :]              # (B, enc_demand_n, 3)
@@ -194,7 +192,7 @@ class Meta_OT_World(Meta_OT_Color):
 
                     # Supply: use all n_supply (usually 100, small enough)
                     # Demand: use more samples than default for lower-variance gradient
-                    n_inner_demand = getattr(cfg, 'n_inner_demand', min(1000, n_demand))
+                    n_inner_demand = cfg.get('n_inner_demand') or min(1000, n_demand)
                     X = self._sample_from_measure(
                         supply_w[b], sc[b], min(cfg.n_inner_samples, n_supply))
                     Y = self._sample_from_measure(
