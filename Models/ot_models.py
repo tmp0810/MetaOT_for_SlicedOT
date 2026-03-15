@@ -166,3 +166,131 @@ class MetaICNN(nn.Module):
 
         D_params_flat, D_conj_params_flat = torch.chunk(z, 2, dim=-1)
         return D_params_flat, D_conj_params_flat
+
+
+# Addition 
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import List, Tuple, Dict
+
+
+def build_icnn_param_info(icnn: 'DenseICNN') -> Tuple[List[Tuple[str, torch.Size, int]], int]:
+    param_info  = []
+    total       = 0
+    for name, p in icnn.named_parameters():
+        param_info.append((name, p.shape, p.numel()))
+        total += p.numel()
+    return param_info, total
+
+
+def unravel_icnn_params(
+    flat: torch.Tensor,
+    param_info: List[Tuple[str, torch.Size, int]],
+) -> Dict[str, torch.Tensor]:
+    out    = {}
+    offset = 0
+    for name, shape, numel in param_info:
+        out[name] = flat[offset : offset + numel].view(shape)
+        offset   += numel
+    return out
+
+
+def _dense_icnn_forward_gs(self, inputs: torch.Tensor, params_dic: dict) -> torch.Tensor:
+    z = F.linear(inputs,
+                 params_dic["linear_first.weight"],
+                 params_dic["linear_first.bias"])
+    z = F.leaky_relu(z, 0.2)
+
+    for i in range(self.hidden_num):
+        z_in  = F.linear(inputs,
+                         params_dic[f"hidden_layers.{i}.0.weight"],
+                         params_dic[f"hidden_layers.{i}.0.bias"])
+        p_pos = params_dic[f"hidden_layers.{i}.1.weight"].clamp(min=0.0)
+        z     = F.linear(z, p_pos, bias=None)
+        z     = F.leaky_relu(z + z_in, 0.2)
+
+    z_in  = F.linear(inputs,
+                     params_dic["linear_last.weight"],
+                     params_dic["linear_last.bias"])
+    p_pos = params_dic["pos_last.weight"].clamp(min=0.0)
+    z     = F.linear(z, p_pos, bias=None)
+    output = z + z_in
+
+    l2_reg = (0.5 * self.strong_convexity * inputs.pow(2)).sum(dim=-1, keepdim=True)
+    return output + l2_reg
+
+
+def _dense_icnn_push_gs(self, x: torch.Tensor, params_dic: dict,
+                        create_graph: bool = False) -> torch.Tensor:
+    x_in = x.detach().requires_grad_(True)
+    y    = self._forward_gs(x_in, params_dic)      # (n, 1)
+    grad = torch.autograd.grad(
+        y.sum(), x_in,
+        create_graph=create_graph,
+        retain_graph=create_graph,
+    )[0]
+    return grad  # (n, d)
+
+
+class PointCloudEncoder(nn.Module):
+    def __init__(self, coord_dim: int = 3, phi_hidden: int = 64, enc_dim: int = 128):
+        super().__init__()
+        inp = coord_dim + 1   # coord + scalar weight
+
+        self.phi = nn.Sequential(
+            nn.Linear(inp,        phi_hidden, dtype=torch.float64), nn.ReLU(),
+            nn.Linear(phi_hidden, phi_hidden, dtype=torch.float64), nn.ReLU(),
+            nn.Linear(phi_hidden, enc_dim,    dtype=torch.float64),
+        )
+        self.rho = nn.Sequential(
+            nn.Linear(enc_dim, enc_dim, dtype=torch.float64), nn.ReLU(),
+            nn.Linear(enc_dim, enc_dim, dtype=torch.float64),
+        )
+
+    def forward(self, weights: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        B, n, d = coords.shape
+        w_exp   = weights.unsqueeze(-1)                  # (B, n, 1)
+        x       = torch.cat([w_exp, coords], dim=-1)     # (B, n, d+1)
+
+        # Per-point embedding: reshape → (B*n, d+1) → phi → (B*n, enc_dim)
+        phi_out = self.phi(x.view(B * n, d + 1)).view(B, n, -1)  # (B, n, enc_dim)
+
+        # Weighted aggregation: Σ w_i * phi_i
+        agg = (weights.unsqueeze(-1) * phi_out).sum(dim=1)        # (B, enc_dim)
+        return self.rho(agg)                                       # (B, enc_dim)
+
+
+class MetaICNN_Cloud(nn.Module):
+    def __init__(
+        self,
+        icnn_param_dim:  int,
+        coord_dim:       int = 3,
+        enc_dim:         int = 128,
+        head_hidden_dim: int = 256,
+    ):
+        super().__init__()
+
+        # Shared encoder for both src and tgt (parameter-efficient)
+        self.encoder = PointCloudEncoder(coord_dim, phi_hidden=64, enc_dim=enc_dim)
+
+        # FC head: [z_src || z_tgt] → 2 * icnn_param_dim
+        self.head = nn.Sequential(
+            nn.Linear(enc_dim * 2, head_hidden_dim, dtype=torch.float64), nn.ReLU(),
+            nn.Linear(head_hidden_dim, head_hidden_dim, dtype=torch.float64), nn.ReLU(),
+            nn.Linear(head_hidden_dim, 2 * icnn_param_dim, dtype=torch.float64),
+        )
+
+    def forward(
+        self,
+        src_w: torch.Tensor,   # (B, n_src)
+        src_c: torch.Tensor,   # (B, n_src, coord_dim)
+        tgt_w: torch.Tensor,   # (B, n_tgt)
+        tgt_c: torch.Tensor,   # (B, n_tgt, coord_dim)
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        z_src = self.encoder(src_w, src_c)         # (B, enc_dim)
+        z_tgt = self.encoder(tgt_w, tgt_c)         # (B, enc_dim)
+        z     = torch.cat([z_src, z_tgt], dim=-1)  # (B, enc_dim*2)
+        out   = self.head(z)                        # (B, 2*icnn_param_dim)
+        return torch.chunk(out, 2, dim=-1)          # each: (B, icnn_param_dim)
