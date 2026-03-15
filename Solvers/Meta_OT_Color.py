@@ -21,6 +21,13 @@ DenseICNN._push_gs    = _dense_icnn_push_gs
 
 
 class Meta_OT_Color(Defense_Train_Base):
+    """
+    Meta-OT baseline for color transfer.
+
+    Uses the same data format as OT_Regression_Sliced_Color:
+        dataloader yields (src_w, src_c, tgt_w, tgt_c)
+        shapes: (B, n_clusters), (B, n_clusters, 3), ...
+    """
 
     INPUT_DIM  = 3   # RGB ∈ [0,1]^3
     COORD_DIM  = 3
@@ -112,7 +119,6 @@ class Meta_OT_Color(Defense_Train_Base):
 
         return dual_loss + cycle_weight * (cyc_XY + cyc_YX)
 
-
     def _pretrain_identity(self, n_iter: int = 500):
         """
         Warm-start the meta-network so D(x) ≈ 0.5||x||^2 (gradient = identity map).
@@ -150,6 +156,7 @@ class Meta_OT_Color(Defense_Train_Base):
                 self.logger.info(f"  pretrain step {step}/{n_iter}  loss={loss.item():.4e}")
 
         self.logger.info("[Meta_OT_Color] Pretrain done.")
+
 
     def train(self, dataloader_train):
         """
@@ -238,9 +245,6 @@ class Meta_OT_Color(Defense_Train_Base):
         torch.save(self.meta_net.state_dict(), ckpt_path)
         self.logger.info(f"[Meta_OT_Color] Saved meta_net -> {ckpt_path}")
 
-    # ------------------------------------------------------------------
-    # Predict plan
-    # ------------------------------------------------------------------
 
     def predict_plan(
         self,
@@ -287,6 +291,16 @@ class Meta_OT_Color(Defense_Train_Base):
         log_P -= log_P.max()
         P     = np.exp(log_P)
         P     = np.clip(P, 0.0, None)
+
+        # Sinkhorn marginal normalization (3 rounds) to enforce P@1≈a, P.T@1≈b
+        def _norm(M, target, axis):
+            s = M.sum(axis=axis, keepdims=True).clip(1e-300)
+            return M * (target.reshape(s.shape) / s)
+        for _ in range(3):
+            P = _norm(P, a, axis=1)
+            P = _norm(P, b, axis=0)
+
+        P = np.clip(P, 0.0, None)
         P_sum = P.sum()
         if P_sum > 0:
             P /= P_sum
