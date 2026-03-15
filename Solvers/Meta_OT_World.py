@@ -41,6 +41,7 @@ class Meta_OT_World(Meta_OT_Color):
         dots = np.clip(dots, -1.0 + 1e-7, 1.0 - 1e-7)
         return np.arccos(dots)    # (n_src, n_tgt)
 
+
     def _sphere_project(self, x: torch.Tensor) -> torch.Tensor:
         """Project R³ points onto the unit sphere S²."""
         nrm = x.norm(dim=-1, keepdim=True).clamp(min=1e-12)
@@ -54,6 +55,11 @@ class Meta_OT_World(Meta_OT_Color):
         Y: torch.Tensor,     # (n_Y, 3)
         cycle_weight: float,
     ) -> torch.Tensor:
+        """
+        W2GN dual loss adapted for sphere.
+
+        Transport maps are projected back to S² after the gradient step.
+        """
         # ── Dual term ─────────────────────────────────────────────────
         T_conj_Y_raw = self.D_conj._push_gs(Y, D_conj_params, create_graph=True)
         T_conj_Y     = self._sphere_project(T_conj_Y_raw)
@@ -75,7 +81,12 @@ class Meta_OT_World(Meta_OT_Color):
 
         return dual_loss + cycle_weight * (cyc_XY + cyc_YX)
 
+    # ------------------------------------------------------------------
+    # Override: pretrain uses sphere-uniform samples
+    # ------------------------------------------------------------------
+
     def _pretrain_identity(self, n_iter: int = 500):
+        """Pretrain on sphere-uniform points (not RGB uniform)."""
         device = self._get_device()
         cfg    = self.cfg_m
         opt    = torch.optim.Adam(self.meta_net.parameters(), lr=cfg.learning_rate)
@@ -99,8 +110,11 @@ class Meta_OT_World(Meta_OT_Color):
             D_p  = unravel_icnn_params(D_flat[0],  self.param_info)
             Dc_p = unravel_icnn_params(Dc_flat[0], self.param_info)
 
-            T_X  = self._sphere_project(self.D._push_gs(X, D_p))
-            Tc_X = self._sphere_project(self.D_conj._push_gs(X, Dc_p))
+            # create_graph=True is required so autograd.grad (inside _push_gs)
+            # retains the graph linking T_X → params_dic → D_flat → meta_net.
+            # Without it the graph is freed and loss.requires_grad = False → crash.
+            T_X  = self._sphere_project(self.D._push_gs(X,  D_p,  create_graph=True))
+            Tc_X = self._sphere_project(self.D_conj._push_gs(X, Dc_p, create_graph=True))
 
             # For sphere: T should approximate identity → T(x) ≈ x
             loss = ((T_X - X) ** 2).mean() + ((Tc_X - X) ** 2).mean()
@@ -113,8 +127,20 @@ class Meta_OT_World(Meta_OT_Color):
                 self.logger.info(f"  pretrain step {step}/{n_iter}  loss={loss.item():.4e}")
         self.logger.info("[Meta_OT_World] Pretrain done.")
 
+    # ------------------------------------------------------------------
+    # Override: train — build correct tensors from WorldPair dataloader
+    # ------------------------------------------------------------------
 
     def train(self, dataloader_train):
+        """
+        Train on WorldPair dataloader.
+
+        Dataloader yields: (dummy, dummy, supply_w, demand_w)
+            supply_w : (B, n_supply)
+            demand_w : (B, n_demand)
+
+        Supply and demand LOCATIONS are fixed (self.supply_euc, self.demand_euc).
+        """
         device  = self._get_device()
         cfg     = self.cfg_m
 
@@ -204,6 +230,10 @@ class Meta_OT_World(Meta_OT_Color):
         ckpt_path = os.path.join(self.log_sub_folder, "meta_net.pt")
         torch.save(self.meta_net.state_dict(), ckpt_path)
         self.logger.info(f"[Meta_OT_World] Saved meta_net -> {ckpt_path}")
+
+    # ------------------------------------------------------------------
+    # Override: predict plan using sphere geometry
+    # ------------------------------------------------------------------
 
     def predict_plan(
         self,
