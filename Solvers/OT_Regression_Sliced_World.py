@@ -136,9 +136,41 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
         Xg = g_grad.cpu().numpy().T   # (n_demand, L)
         return Xf, Xg
 
+    def _potentials_to_plan(
+        self, 
+        a: np.ndarray, 
+        b: np.ndarray, 
+        f: np.ndarray, 
+        g: np.ndarray
+    ) -> np.ndarray:
+        eps = self.cfg_m.epsilon
+        
+        log_P = f[:, None] / eps - self.C / eps + g[None, :] / eps
+
+        def lse(X, axis):
+            m = X.max(axis=axis, keepdims=True)
+            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+            
+        log_a = np.log(np.clip(a, 1e-300, None))
+        log_u = log_a[:, None] - lse(log_P, axis=1)[:, None]
+        log_P = log_P + log_u
+
+        log_b = np.log(np.clip(b, 1e-300, None))
+        log_v = log_b[None, :] - lse(log_P, axis=0)[None, :]
+        log_P = log_P + log_v
+
+        P = np.exp(log_P)
+        P = np.clip(P, 0.0, None)
+
+        P_sum = P.sum()
+        if P_sum > 0:
+            P /= P_sum
+            
+        return P
+
     def predict_plan(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
         f_pred, g_pred = self._predict_potentials(a, b, self.alpha, self.beta)
-        return self._potentials_to_plan(a, b, f_pred, g_pred)
+        return _potentials_to_plan(a, b, f_pred, g_pred)
 
 
     def train(self, dataloader_train, dataloader_test=None):
