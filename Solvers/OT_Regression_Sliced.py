@@ -73,7 +73,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
         
         eps = self.cfg_m.epsilon
  
-        P_gt = ot.sinkhorn(a, b, C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=False)
+        P_gt = ot.sinkhorn(a, b, self.C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=False)
  
         a_safe = np.clip(a, 1e-10, None)
         b_safe = np.clip(b, 1e-10, None)
@@ -82,7 +82,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
         u = P_gt.sum(axis=1) / a_safe 
         v = P_gt.sum(axis=0) / b_safe
         
-        _, log_dict = ot.sinkhorn(a, b, C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=True)
+        _, log_dict = ot.sinkhorn(a, b, self.C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=True)
         u_opt = log_dict['u']
         v_opt = log_dict['v']
         
