@@ -7,7 +7,7 @@ def init_cfg(n_solver):
     cfg_m.insert("datasets_root", '../datasets')
 
     if n_solver == "OT_Discrete":
-        cfg_m.insert("epochs", 50)
+        cfg_m.insert("epochs", 10)
         cfg_m.insert("learning_rate_init", 1e-3)
         cfg_m.insert("log_interval", 100)
         cfg_m.insert("batch_size", 1024)
