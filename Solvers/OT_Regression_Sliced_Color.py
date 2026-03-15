@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 from tqdm import tqdm
+import ot
 
 from Solvers.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
 from regression_OT_utils import (
@@ -49,26 +50,33 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
     ):
         if C is None:
             raise ValueError("[Color] _solve_entropic_ot requires explicit C.")
-
-        import ot 
         
         eps = self.cfg_m.epsilon
- 
-        P_gt = ot.sinkhorn(a, b, C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=False)
- 
-        a_safe = np.clip(a, 1e-10, None)
-        b_safe = np.clip(b, 1e-10, None)
-        
 
-        u = P_gt.sum(axis=1) / a_safe 
-        v = P_gt.sum(axis=0) / b_safe
+        a_safe = np.clip(a, 1e-10, None)
+        a_safe /= a_safe.sum()
+        b_safe = np.clip(b, 1e-10, None)
+        b_safe /= b_safe.sum()
+ 
+        _, log_dict = ot.sinkhorn(
+            a_safe, b_safe, C, 
+            reg=eps, 
+            numItermax=self.cfg_m.sinkhorn_iters, 
+            stopThr=1e-5, 
+            log=True
+        )
         
-        _, log_dict = ot.sinkhorn(a, b, C, reg=eps, numItermax=self.cfg_m.sinkhorn_iters, stopThr=1e-6, log=True)
-        u_opt = log_dict['u']
-        v_opt = log_dict['v']
-        
-        f = eps * np.log(np.clip(u_opt, 1e-300, None))
-        g = eps * np.log(np.clip(v_opt, 1e-300, None))
+        if 'alpha' in log_dict:
+            f = log_dict['alpha']
+            g = log_dict['beta']
+        elif 'log_u' in log_dict:
+            f = eps * log_dict['log_u']
+            g = eps * log_dict['log_v']
+        else:
+            u_opt = log_dict.get('u', np.ones_like(a))
+            v_opt = log_dict.get('v', np.ones_like(b))
+            f = eps * np.log(np.clip(u_opt, 1e-50, None))
+            g = eps * np.log(np.clip(v_opt, 1e-50, None))
 
         return f, g
 
