@@ -21,14 +21,6 @@ DenseICNN._push_gs    = _dense_icnn_push_gs
 
 
 class Meta_OT_Color(Defense_Train_Base):
-    """
-    Meta-OT baseline for color transfer.
-
-    Uses the same data format as OT_Regression_Sliced_Color:
-        dataloader yields (src_w, src_c, tgt_w, tgt_c)
-        shapes: (B, n_clusters), (B, n_clusters, 3), ...
-    """
-
     INPUT_DIM  = 3   # RGB ∈ [0,1]^3
     COORD_DIM  = 3
 
