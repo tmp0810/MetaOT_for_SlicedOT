@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from Solvers.Meta_OT_Color import Meta_OT_Color
-from Models.ot_models_additions import unravel_icnn_params
+from Models.ot_models import unravel_icnn_params
 
 
 class Meta_OT_World(Meta_OT_Color):
