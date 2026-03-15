@@ -170,7 +170,7 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
 
     def predict_plan(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
         f_pred, g_pred = self._predict_potentials(a, b, self.alpha, self.beta)
-        return _potentials_to_plan(a, b, f_pred, g_pred)
+        return self._potentials_to_plan(a, b, f_pred, g_pred)
 
 
     def train(self, dataloader_train, dataloader_test=None):
