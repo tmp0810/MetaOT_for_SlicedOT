@@ -46,13 +46,12 @@ def plot_transport(
     title: str,
     out_path: str,
 ):
-    T = P.argmax(axis=0)                              
-    demand_to_supply_euc = supply_euc[T]             
+    T = P.argmax(axis=0)
+    demand_to_supply_euc = supply_euc[T]
 
     fig, ax = plt.subplots(figsize=(10, 5))
     colors = plt.style.library['bmh']['axes.prop_cycle'].by_key()['color']
 
-    # Background: landmask
     ax.imshow(
         landmask, cmap='gray_r',
         extent=[-np.pi, np.pi, 0, np.pi],
@@ -90,7 +89,7 @@ def plot_transport(
     fig.tight_layout()
     fig.savefig(out_path, transparent=True, bbox_inches='tight')
     plt.close(fig)
-    print(f"  Saved → {out_path}")
+    print(f"  Saved -> {out_path}")
 
 
 def solve_ot_pot(a, b, C, reg=0.1, num_iter=1000):
@@ -101,22 +100,23 @@ def solve_ot_pot(a, b, C, reg=0.1, num_iter=1000):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_dir',    type=str, required=True,
-                        help='Directory containing saved model (model.pkl or alpha/beta .npy)')
-    parser.add_argument('--pop_tiff',     type=str, required=True,
+    parser.add_argument('--model_dir',   type=str, required=True,
+                        help='Directory with model.pkl (any WorldPair solver)')
+    parser.add_argument('--pop_tiff',    type=str, required=True,
                         help='Path to pop-15min.tif population raster')
-    parser.add_argument('--num_samples',  type=int, default=5)
-    parser.add_argument('--n_supply',     type=int, default=100)
-    parser.add_argument('--n_demand',     type=int, default=10_000)
-    parser.add_argument('--seed',         type=int, default=0)
-    parser.add_argument('--out_dir',      type=str, default='./world_plots')
-    parser.add_argument('--no_baseline',  action='store_true',
-                        help='Skip expensive Sinkhorn baseline')
+    parser.add_argument('--num_samples', type=int, default=5)
+    parser.add_argument('--n_supply',    type=int, default=100)
+    parser.add_argument('--n_demand',    type=int, default=10_000)
+    parser.add_argument('--seed',        type=int, default=0)
+    parser.add_argument('--out_dir',     type=str, default='./world_plots')
+    parser.add_argument('--no_baseline', action='store_true',
+                        help='Skip Sinkhorn baseline')
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    print("Loading world locations …")
+    # ── Load locations ────────────────────────────────────────────────
+    print("Loading world locations ...")
     supply_sph, supply_euc, demand_sph, demand_euc = load_world_locations(
         args.pop_tiff,
         n_supply=args.n_supply,
@@ -124,66 +124,102 @@ def main():
         seed=args.seed,
     )
 
+    # Landmask for background — downsample to avoid OOM
     import rasterio
     from rasterio.enums import Resampling
     with rasterio.open(args.pop_tiff) as _src:
-        _nodata  = _src.nodata
-        _out_h   = max(1, _src.height // 4)
-        _out_w   = max(1, _src.width  // 4)
+        _nodata = _src.nodata
+        _out_h  = max(1, _src.height // 4)
+        _out_w  = max(1, _src.width  // 4)
         _raw = _src.read(1, out_shape=(_out_h, _out_w),
                          resampling=Resampling.average).astype(np.float64)
     if _nodata is not None:
         _raw[np.isclose(_raw, _nodata, rtol=1e-3)] = 0.0
     _raw[~np.isfinite(_raw)] = 0.0
     _raw[_raw < 0] = 0.0
-    landmask = (_raw > 0).astype(np.float32)   # float32 saves memory
+    landmask = (_raw > 0).astype(np.float32)
 
-    print(f"Loading model from {args.model_dir} …")
+    # ── Load trained model ────────────────────────────────────────────
+    print(f"Loading model from {args.model_dir} ...")
     model_pkl = os.path.join(args.model_dir, 'model.pkl')
     if os.path.exists(model_pkl):
         with open(model_pkl, 'rb') as f:
             model = pickle.load(f)
     else:
+        # Fallback: alpha/beta .npy → rebuild OT_Regression_Sliced_World only
+        # (Meta_OT_World cannot be rebuilt from .npy — it needs meta_net.pt)
+        import argparse as _ap
+        from time import localtime, strftime
         from cfg import init_cfg
-        from OT_Regression_Sliced_World import OT_Regression_Sliced_World
+        from Solvers.OT_Regression_Sliced_World import OT_Regression_Sliced_World
 
-        cfg_m   = init_cfg("OT_Regression_Sliced_World")
-        cfg_proj = type('cfg_proj', (), {'log_folder': args.model_dir})()
-        model   = OT_Regression_Sliced_World(
-            cfg_proj, cfg_m, supply_euc, demand_euc, supply_sph, demand_sph
+        cfg_m    = init_cfg("OT_Regression_Sliced_World")
+        cfg_proj = _ap.Namespace(
+            seed      = args.seed,
+            flag_time = strftime("%Y-%m-%d_%H-%M-%S", localtime()),
+            flag_load = None,
+            solver    = "OT_Regression_Sliced_World",
+            data_name = "world_pair",
+            gpu       = "0",
         )
+        model = OT_Regression_Sliced_World(
+            cfg_proj, cfg_m, supply_euc, demand_euc, supply_sph, demand_sph)
         model.alpha = np.load(os.path.join(args.model_dir, 'alpha.npy'))
         model.beta  = np.load(os.path.join(args.model_dir, 'beta.npy'))
 
+    model_label = type(model).__name__
+    print(f"  Model : {model_label}")
+
+    # Precompute cost matrix (for Sinkhorn baseline)
     from Solvers.OT_Regression_Sliced_World import _sphere_cost
-    C = _sphere_cost(supply_euc, demand_euc)   # (n_supply, n_demand)
+    C   = _sphere_cost(supply_euc, demand_euc)
+    eps = float(getattr(model.cfg_m, 'epsilon', 0.5))
+
+    # ── Plot each sample ──────────────────────────────────────────────
+    import time
+    times_model, times_sinkhorn = [], []
 
     for i in range(args.num_samples):
         print(f"\nSample {i+1}/{args.num_samples}")
-        a, b = sample_one_pair(
-            args.n_supply, args.n_demand,
-            seed=args.seed + i,
-        )
+        a, b = sample_one_pair(args.n_supply, args.n_demand, seed=args.seed + i)
 
-        P_pred = model.predict_plan(a, b)
+        # Both OT_Regression_Sliced_World and Meta_OT_World share the same
+        # predict_plan(a, b) interface — no dispatch needed
+        t0      = time.time()
+        P_pred  = model.predict_plan(a, b)
+        t_model = time.time() - t0
+        times_model.append(t_model)
+
         plot_transport(
             a, b, P_pred,
             supply_euc, demand_euc, supply_sph, landmask,
-            title=f'OT Regression Sliced — sample {i}',
-            out_path=os.path.join(args.out_dir, f'regression_{i}.pdf'),
+            title=f'{model_label} — sample {i}  ({t_model:.2f}s)',
+            out_path=os.path.join(args.out_dir, f'model_{i}.pdf'),
         )
 
         if not args.no_baseline:
-            print("  Running Sinkhorn baseline …")
-            eps = getattr(model.cfg_m, 'epsilon', 0.1)
-            P_gt = solve_ot_pot(a, b, C, reg=eps)
+            print("  Running Sinkhorn baseline ...")
+            t0     = time.time()
+            P_gt   = solve_ot_pot(a, b, C, reg=eps)
+            t_sink = time.time() - t0
+            times_sinkhorn.append(t_sink)
             plot_transport(
                 a, b, P_gt,
                 supply_euc, demand_euc, supply_sph, landmask,
-                title=f'Sinkhorn (ε={eps}) — sample {i}',
+                title=f'Sinkhorn (eps={eps}) — sample {i}  ({t_sink:.2f}s)',
                 out_path=os.path.join(args.out_dir, f'sinkhorn_{i}.pdf'),
             )
 
+    # ── Timing summary ────────────────────────────────────────────────
+    tm = np.array(times_model)
+    print(f"\n{'='*50}")
+    print(f"Timing summary ({args.num_samples} samples)")
+    print(f"{'='*50}")
+    print(f"{model_label:35s}: {tm.mean():.3f}s +/- {tm.std():.3f}s")
+    if times_sinkhorn:
+        ts = np.array(times_sinkhorn)
+        print(f"{'Sinkhorn baseline':35s}: {ts.mean():.3f}s +/- {ts.std():.3f}s")
+        print(f"{'Speedup':35s}: {ts.mean()/tm.mean():.1f}x")
     print(f"\nAll plots saved to {args.out_dir}/")
 
 
