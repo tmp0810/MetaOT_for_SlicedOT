@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from Solvers.DefenseTrain import Defense_Train_Base
 from Models.ot_models import DenseICNN
-from Models.ot_models_additions import (
+from Models.ot_models import (
     MetaICNN_Cloud,
     build_icnn_param_info,
     unravel_icnn_params,
