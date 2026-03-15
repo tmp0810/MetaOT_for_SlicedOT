@@ -15,11 +15,13 @@ from Models.ot_models import (
     _dense_icnn_push_gs,
 )
 
+# Monkey-patch gradient-safe methods onto DenseICNN
 DenseICNN._forward_gs = _dense_icnn_forward_gs
 DenseICNN._push_gs    = _dense_icnn_push_gs
 
 
 class Meta_OT_Color(Defense_Train_Base):
+
     INPUT_DIM  = 3   # RGB ∈ [0,1]^3
     COORD_DIM  = 3
 
@@ -60,13 +62,13 @@ class Meta_OT_Color(Defense_Train_Base):
         n_meta = sum(p.numel() for p in self.meta_net.parameters())
         self.logger.info(f"[Meta_OT_Color] MetaICNN_Cloud params: {n_meta:,}")
 
-
     def _get_device(self):
         if torch.cuda.is_available() and hasattr(self.cfg_m, "gpu"):
             return torch.device(f"cuda:{self.cfg_m.gpu}")
         return torch.device("cpu")
 
     def _compute_cost(self, x_src: np.ndarray, x_tgt: np.ndarray) -> np.ndarray:
+        """Squared Euclidean cost in [0,1]^3. (n_src, n_tgt)."""
         diff = x_src[:, None, :] - x_tgt[None, :, :]
         return (diff ** 2).sum(axis=-1)
 
@@ -88,6 +90,12 @@ class Meta_OT_Color(Defense_Train_Base):
         Y:  torch.Tensor,    # (n_Y, d)  samples from ν
         cycle_weight: float,
     ) -> torch.Tensor:
+        """
+        W2GN dual loss for one (µ, ν) pair.
+
+        L = E_X[D(X)] + E_Y[<T_c(Y), Y> - D(T_c(Y))]
+          + λ * cycle(D, D_c, X, Y)
+        """
         # ── Dual term ─────────────────────────────────────────────────
         T_conj_Y = self.D_conj._push_gs(Y, D_conj_params, create_graph=True)  # (n_Y, d)
         T_conj_Y_det = T_conj_Y.detach()
@@ -106,6 +114,10 @@ class Meta_OT_Color(Defense_Train_Base):
 
 
     def _pretrain_identity(self, n_iter: int = 500):
+        """
+        Warm-start the meta-network so D(x) ≈ 0.5||x||^2 (gradient = identity map).
+        Trains on random RGB points X ~ U[0,1]^3.
+        """
         device  = self._get_device()
         cfg     = self.cfg_m
         opt     = torch.optim.Adam(self.meta_net.parameters(), lr=cfg.learning_rate)
@@ -125,8 +137,9 @@ class Meta_OT_Color(Defense_Train_Base):
             Dc_p = unravel_icnn_params(Dc_flat[0], self.param_info)
 
             # Loss: push(D, X) ≈ X  and  push(D_conj, X) ≈ X
-            T_X  = self.D._push_gs(X, D_p)
-            Tc_X = self.D_conj._push_gs(X, Dc_p)
+            # create_graph=True required — see Meta_OT_World._pretrain_identity comment
+            T_X  = self.D._push_gs(X,  D_p,  create_graph=True)
+            Tc_X = self.D_conj._push_gs(X, Dc_p, create_graph=True)
             loss = ((T_X - X) ** 2).mean() + ((Tc_X - X) ** 2).mean()
 
             opt.zero_grad()
