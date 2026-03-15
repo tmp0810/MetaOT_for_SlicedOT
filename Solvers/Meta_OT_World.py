@@ -55,11 +55,6 @@ class Meta_OT_World(Meta_OT_Color):
         Y: torch.Tensor,     # (n_Y, 3)
         cycle_weight: float,
     ) -> torch.Tensor:
-        """
-        W2GN dual loss adapted for sphere.
-
-        Transport maps are projected back to S² after the gradient step.
-        """
         # ── Dual term ─────────────────────────────────────────────────
         T_conj_Y_raw = self.D_conj._push_gs(Y, D_conj_params, create_graph=True)
         T_conj_Y     = self._sphere_project(T_conj_Y_raw)
@@ -80,10 +75,6 @@ class Meta_OT_World(Meta_OT_Color):
             self.D._push_gs(T_conj_Y.detach(), D_params))      - Y) ** 2).mean()
 
         return dual_loss + cycle_weight * (cyc_XY + cyc_YX)
-
-    # ------------------------------------------------------------------
-    # Override: pretrain uses sphere-uniform samples
-    # ------------------------------------------------------------------
 
     def _pretrain_identity(self, n_iter: int = 500):
         """Pretrain on sphere-uniform points (not RGB uniform)."""
@@ -126,10 +117,6 @@ class Meta_OT_World(Meta_OT_Color):
             if step % 100 == 0:
                 self.logger.info(f"  pretrain step {step}/{n_iter}  loss={loss.item():.4e}")
         self.logger.info("[Meta_OT_World] Pretrain done.")
-
-    # ------------------------------------------------------------------
-    # Override: train — build correct tensors from WorldPair dataloader
-    # ------------------------------------------------------------------
 
     def train(self, dataloader_train):
         """
@@ -184,8 +171,20 @@ class Meta_OT_World(Meta_OT_Color):
                 sc = supply_euc_t.unsqueeze(0).expand(B, -1, -1)  # (B, n_supply, 3)
                 dc = demand_euc_t.unsqueeze(0).expand(B, -1, -1)  # (B, n_demand, 3)
 
+                # ── Subsample demand for encoder (speed + capacity) ────
+                # Full n_demand=10000 overwhelms the encoder (128-dim embedding
+                # for 10k points = 0.013 bits/point). Subsample to enc_demand_n.
+                enc_demand_n = getattr(cfg, 'enc_demand_subsample', 1000)
+                if n_demand > enc_demand_n:
+                    enc_idx  = torch.randperm(n_demand, device=device)[:enc_demand_n]
+                    dc_enc   = dc[:, enc_idx, :]              # (B, enc_demand_n, 3)
+                    dw_enc   = demand_w[:, enc_idx]
+                    dw_enc   = dw_enc / dw_enc.sum(dim=-1, keepdim=True).clamp(1e-12)
+                else:
+                    dc_enc, dw_enc = dc, demand_w
+
                 # ── Forward meta-network ───────────────────────────────
-                D_flat, Dc_flat = self.meta_net(supply_w, sc, demand_w, dc)
+                D_flat, Dc_flat = self.meta_net(supply_w, sc, dw_enc, dc_enc)
 
                 # ── Compute loss ───────────────────────────────────────
                 total_loss = torch.tensor(0.0, dtype=torch.float64, device=device)
@@ -193,12 +192,13 @@ class Meta_OT_World(Meta_OT_Color):
                     D_p  = unravel_icnn_params(D_flat[b],  self.param_info)
                     Dc_p = unravel_icnn_params(Dc_flat[b], self.param_info)
 
-                    # Sample supply (all n_supply=100) and n_inner from demand
-                    n_smp = min(cfg.n_inner_samples, n_demand)
+                    # Supply: use all n_supply (usually 100, small enough)
+                    # Demand: use more samples than default for lower-variance gradient
+                    n_inner_demand = getattr(cfg, 'n_inner_demand', min(1000, n_demand))
                     X = self._sample_from_measure(
                         supply_w[b], sc[b], min(cfg.n_inner_samples, n_supply))
                     Y = self._sample_from_measure(
-                        demand_w[b], dc[b], n_smp)
+                        demand_w[b], dc[b], min(n_inner_demand, n_demand))
 
                     loss_b = self._dual_loss_single(
                         D_p, Dc_p, X, Y, cfg.cycle_loss_weight)
@@ -230,10 +230,6 @@ class Meta_OT_World(Meta_OT_Color):
         ckpt_path = os.path.join(self.log_sub_folder, "meta_net.pt")
         torch.save(self.meta_net.state_dict(), ckpt_path)
         self.logger.info(f"[Meta_OT_World] Saved meta_net -> {ckpt_path}")
-
-    # ------------------------------------------------------------------
-    # Override: predict plan using sphere geometry
-    # ------------------------------------------------------------------
 
     def predict_plan(
         self,
@@ -269,6 +265,21 @@ class Meta_OT_World(Meta_OT_Color):
         log_P -= log_P.max()
         P     = np.exp(log_P)
         P     = np.clip(P, 0.0, None)
+
+        # ── Sinkhorn marginal normalization (2 rounds) ────────────────
+        # Raw exp(log_P) does NOT satisfy P @ 1 = a, P.T @ 1 = b.
+        # Without marginal enforcement the plan ignores the supply/demand
+        # weights → poor visual quality (mass concentrates on a few points).
+        # Two alternating normalizations bring marginals close to a, b.
+        def lse_norm(M, target, axis):
+            s = M.sum(axis=axis, keepdims=True).clip(1e-300)
+            return M * (target.reshape(s.shape) / s)
+
+        for _ in range(3):
+            P = lse_norm(P, a, axis=1)   # fix source marginal
+            P = lse_norm(P, b, axis=0)   # fix target marginal
+
+        P = np.clip(P, 0.0, None)
         P_sum = P.sum()
         if P_sum > 0:
             P /= P_sum
