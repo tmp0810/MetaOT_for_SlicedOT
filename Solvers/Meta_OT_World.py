@@ -85,55 +85,44 @@ class Meta_OT_World(Defense_Train_Base):
             f"n_hidden={n_hidden}  n_hidden_layer={n_hidden_layer}"
         )
 
-    def _g_from_f(
+ 
+    def _g_and_f_from_f_pred(
         self,
-        f:     torch.Tensor,   # (..., n_supply)
-        b:     torch.Tensor,   # (..., n_demand)
-        log_K: torch.Tensor,   # (n_supply, n_demand)
-        eps:   float,
-    ) -> torch.Tensor:
-        # log_K + f/eps: broadcast (..., n_supply, 1) + (n_supply, n_demand)
-        # lse over supply axis (dim=-2)
+        f_pred: torch.Tensor,  # (B, n_supply)
+        a:      torch.Tensor,  # (B, n_supply)
+        b:      torch.Tensor,  # (B, n_demand)
+        log_K:  torch.Tensor,  # (n_supply, n_demand)
+        eps:    float,
+    ):
         log_b = torch.log(b.clamp(min=1e-300))
-        # (..., n_supply, n_demand)
-        M = log_K.unsqueeze(0) + (f / eps).unsqueeze(-1)
-        # lse over supply (axis=0 in original = dim=-2 here)
-        m   = M.max(dim=-2, keepdim=True).values
-        lse = (M - m).exp().sum(dim=-2).log() + m.squeeze(-2)  # (..., n_demand)
-        return eps * (log_b - lse)
+        M_g = log_K.unsqueeze(0) + (f_pred / eps).unsqueeze(-1)
+        m_g = M_g.max(dim=-2, keepdim=True).values
+        lse_g = (M_g - m_g).exp().sum(dim=-2).log() + m_g.squeeze(-2)
+        g_sink = eps * (log_b - lse_g)
+        log_a = torch.log(a.clamp(min=1e-300))
+        M_f = log_K.unsqueeze(0) + (g_sink / eps).unsqueeze(-2)
+        m_f = M_f.max(dim=-1, keepdim=True).values
+        lse_f = (M_f - m_f).exp().sum(dim=-1).log() + m_f.squeeze(-1)
+        f_sink = eps * (log_a - lse_f)
+
+        return g_sink, f_sink
 
     def _dual_obj_from_f(
         self,
-        a:     torch.Tensor,   # (..., n_supply)
-        b:     torch.Tensor,   # (..., n_demand)
-        f:     torch.Tensor,   # (..., n_supply)
-        log_K: torch.Tensor,   # (n_supply, n_demand)
+        a:     torch.Tensor,
+        b:     torch.Tensor,
+        f:     torch.Tensor,   # Đây là f_pred từ MLP
+        log_K: torch.Tensor,
         eps:   float,
     ) -> torch.Tensor:
-        g = self._g_from_f(f, b, log_K, eps)   # (..., n_demand)
+        
+        g_sink, f_sink = self._g_and_f_from_f_pred(f, a, b, log_K, eps)
+        dual_obj_left = (f_sink * a).sum(dim=-1) + (g_sink * b).sum(dim=-1)
+        log_P = (f_sink.unsqueeze(-1) + g_sink.unsqueeze(-2)) / eps + log_K.unsqueeze(0)
+        lp_max = log_P.detach().max() 
+        P_sum = (log_P - lp_max).exp().sum(dim=(-2, -1)) * lp_max.exp()
+        dual = dual_obj_left - eps * P_sum + eps
 
-        # potential_from_scaling:
-        # fa_i = eps*log(sum_j exp((g_j - C_ij)/eps))
-        #      = eps*log(sum_j exp(log_K_ij + g_j/eps))
-        M_fa = log_K.unsqueeze(0) + (g / eps).unsqueeze(-2)   # (..., n_supply, n_demand)
-        m    = M_fa.max(dim=-1, keepdim=True).values
-        fa   = eps * ((M_fa - m).exp().sum(dim=-1).log() + m.squeeze(-1))  # (..., n_supply)
-
-        # gb_j = eps*log(sum_i exp((f_i - C_ij)/eps))
-        #      = eps*log(sum_i exp(log_K_ij + f_i/eps))
-        M_gb = log_K.unsqueeze(0) + (f / eps).unsqueeze(-1)   # (..., n_supply, n_demand)
-        m    = M_gb.max(dim=-2, keepdim=True).values
-        gb   = eps * ((M_gb - m).exp().sum(dim=-2).log() + m.squeeze(-2))  # (..., n_demand)
-
-        div_a = (a * (f - fa)).sum(dim=-1)    # (...,)
-        div_b = (b * (g - gb)).sum(dim=-1)    # (...,)
-
-        # total_sum = sum_{ij} exp((f_i + g_j - C_ij)/eps)
-        log_P = (f.unsqueeze(-1) + g.unsqueeze(-2)) / eps + log_K.unsqueeze(0)
-        lp_max = log_P.max()
-        total_sum = (log_P - lp_max).exp().sum(dim=(-2, -1)) * lp_max.exp()
-
-        dual = div_a + div_b + eps * (1.0 - total_sum)
         return dual.mean() if dual.dim() > 0 else dual
 
 
@@ -203,9 +192,6 @@ class Meta_OT_World(Defense_Train_Base):
 
 
     def predict_plan(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-        """
-        a : (n_supply,)  b : (n_demand,)  → P : (n_supply, n_demand)
-        """
         device = self._device()
         eps    = float(self.cfg_m.epsilon)
 
@@ -215,24 +201,32 @@ class Meta_OT_World(Defense_Train_Base):
         log_K = -C_t / eps
 
         with torch.no_grad():
-            f_t = self.mlp(a_t, b_t)                          # (1, n_supply)
-            g_t = self._g_from_f(f_t, b_t, log_K, eps)       # (1, n_demand)
+            f_pred = self.mlp(a_t, b_t)                      # (1, n_supply)
+            g_t, f_t = self._g_and_f_from_f_pred(f_pred, a_t, b_t, log_K, eps)  
+            
             f = f_t[0].cpu().numpy()
             g = g_t[0].cpu().numpy()
 
-        # Plan recovery
-        f_c   = f - f.mean()
-        g_c   = g - g.mean()
-        log_P = f_c[:, None] / eps - self.C_np / eps + g_c[None, :] / eps
-        log_P -= log_P.max()
-        P = np.clip(np.exp(log_P), 0.0, None)
+        log_P = f[:, None] / eps - self.C_np / eps + g[None, :] / eps
 
-        # Sinkhorn marginal projection (5 rounds)
-        for _ in range(5):
-            P = P * (a / P.sum(axis=1).clip(1e-300))[:, None]
-            P = P * (b / P.sum(axis=0).clip(1e-300))[None, :]
+        def lse(X, axis):
+            m = X.max(axis=axis, keepdims=True)
+            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+
+        log_a = np.log(np.clip(a, 1e-300, None))
+        log_b = np.log(np.clip(b, 1e-300, None))
+        for _ in range(1):
+            log_u = log_a[:, None] - lse(log_P, axis=1)[:, None]
+            log_P = log_P + log_u
+            
+            log_v = log_b[None, :] - lse(log_P, axis=0)[None, :]
+            log_P = log_P + log_v
+
+        log_P -= log_P.max() 
+        P = np.exp(log_P)
         P = np.clip(P, 0.0, None)
         s = P.sum()
         if s > 0:
             P /= s
+            
         return P
