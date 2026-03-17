@@ -68,17 +68,34 @@ class OT_Discrete(Defense_Train_Base):
             xs_a = xs_a[:2].to(self.device)
             xs_b = xs_b[:2].to(self.device)
             break
-        Ps_gt = Cal_P(xs_a, xs_b, True, loss_func, model)
+        import ot # Import thư viện POT
+        
         Ps_pred = Cal_P(xs_a, xs_b, False, loss_func, model)
-        imgs_gt = interp(Ps_gt[0], num_inter = 11, batch_size = 50000, img_size = self.cfg_m.img_size)
+        
+        a_np = xs_a[0].cpu().numpy()
+        b_np = xs_b[0].cpu().numpy()
+        
+        a_safe = np.clip(a_np, 1e-10, None)
+        a_safe /= a_safe.sum()
+        b_safe = np.clip(b_np, 1e-10, None)
+        b_safe /= b_safe.sum()
+
+        C_np = loss_func.C.cpu().numpy()
+        eps = self.cfg_m.epsilon
+        
+        P_gt = ot.sinkhorn(a_safe, b_safe, C_np, reg=eps, numItermax=2000, stopThr=1e-5)
+        
+        rmse_p = float(np.sqrt(np.mean((P_gt - Ps_pred[0]) ** 2)))
+        self.logger.info(f"[Sanity Check] RMSE_Plan: {rmse_p:.8f} | sum_gt={P_gt.sum():.4f} sum_pred={Ps_pred[0].sum():.4f}")
+
+        imgs_gt = interp(P_gt, num_inter = 11, batch_size = 50000, img_size = self.cfg_m.img_size)
         imgs_pred = interp(Ps_pred[0], num_inter = 11, batch_size = 50000, img_size = self.cfg_m.img_size)
         utils.save_r(imgs_gt, xs_a[0], xs_b[0], path = self.log_sub_folder, title = "GroundTruth")
         utils.save_r(imgs_pred, xs_a[0], xs_b[0], path = self.log_sub_folder, title = "Pred")
 
-
 def Cal_P(x_a, x_b, flag_ground_truth, loss_func = None, model = None):
-      f_pred = model(x_a, x_b) 
-      P = loss_func.pred_transport(x_a, x_b, f_pred)
+    f_pred = model(x_a, x_b) 
+    P = loss_func.pred_transport(x_a, x_b, f_pred)
     return P
 
 
