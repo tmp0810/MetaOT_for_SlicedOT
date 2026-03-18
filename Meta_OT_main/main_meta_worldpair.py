@@ -7,7 +7,7 @@ import numpy as np
 
 from cfg import init_cfg
 from Data.world_pair_data import load_world_locations, get_world_pair_dataloader
-from Solvers.Meta_OT_World import Meta_OT_World
+from Solvers.Meta_OT.Meta_OT_World import Meta_OT_World
 from time import localtime, strftime
 
 

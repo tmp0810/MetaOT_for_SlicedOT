@@ -21,7 +21,7 @@
 
 import sys
 import os
-from Solvers.OT_Regression_Sliced import OT_Regression_Sliced   # ← new solver
+from Solvers.Meta_OT.Meta_OT_gray_scale import OT_Discrete   # ← new solver
 import torch as torch
 import numpy as np
 import os

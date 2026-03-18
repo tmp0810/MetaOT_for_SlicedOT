@@ -6,7 +6,7 @@ from time import localtime, strftime
 
 from cfg import init_cfg
 from Data.color_transfer_data import get_color_transfer_dataloader
-from Solvers.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
+from Solvers.Regression_SlicedOT.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
 
 
 def parse_args():

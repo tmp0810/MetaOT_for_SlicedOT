@@ -151,7 +151,7 @@ def main():
         import argparse as _ap
         from time import localtime, strftime
         from cfg import init_cfg
-        from Solvers.OT_Regression_Sliced_World import OT_Regression_Sliced_World
+        from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import OT_Regression_Sliced_World
 
         cfg_m    = init_cfg("OT_Regression_Sliced_World")
         cfg_proj = _ap.Namespace(
@@ -171,7 +171,7 @@ def main():
     print(f"  Model : {model_label}")
 
     # Precompute cost matrix (for Sinkhorn baseline)
-    from Solvers.OT_Regression_Sliced_World import _sphere_cost
+    from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import _sphere_cost
     C   = _sphere_cost(supply_euc, demand_euc)
     eps = float(getattr(model.cfg_m, 'epsilon', 0.5))
 

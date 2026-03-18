@@ -8,7 +8,7 @@ import torch
 
 from cfg import init_cfg
 from Data.world_pair_data import load_world_locations, get_world_pair_dataloader
-from Solvers.OT_Regression_Sliced_World import OT_Regression_Sliced_World
+from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import OT_Regression_Sliced_World
 from time import localtime, strftime
 
 

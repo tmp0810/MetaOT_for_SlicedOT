@@ -7,7 +7,7 @@ from time import localtime, strftime
 
 from cfg import init_cfg
 from Data.color_transfer_data import get_color_transfer_dataloader
-from Solvers.Meta_OT_Color import Meta_OT_Color
+from Solvers.Meta_OT.Meta_OT_Color import Meta_OT_Color
 
 
 def parse_args():
