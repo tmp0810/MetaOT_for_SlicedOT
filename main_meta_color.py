@@ -6,25 +6,23 @@ import numpy as np
 from time import localtime, strftime
 
 from cfg import init_cfg
-from Data.color_meta_data import get_image_paths
+from Data.color_transfer_data import get_color_transfer_dataloader
 from Solvers.Meta_OT_Color import Meta_OT_Color
-from PIL import Image
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Train Meta-OT (W2GN dual + cycle) for color transfer")
-    p.add_argument("--data_dir",          type=str, required=True)
-    p.add_argument("--out_dir",           type=str, default="./runs/meta_ot_color")
-    p.add_argument("--num_train_iter",    type=int, default=None)
-    p.add_argument("--lr",                type=float, default=None)
-    p.add_argument("--meta_batch_size",   type=int, default=None)
-    p.add_argument("--inner_batch_size",  type=int, default=None)
-    p.add_argument("--num_pretrain_iter", type=int, default=None)
-    p.add_argument("--cycle_loss_weight", type=float, default=None)
-    p.add_argument("--num_rgb_sample",    type=int, default=None)
-    p.add_argument("--seed",              type=int, default=0)
-    p.add_argument("--gpu",              type=str, default="0")
+        description="Train Meta-OT Discrete (Sinkhorn dual) for color transfer")
+    p.add_argument("--data_dir",      type=str, required=True)
+    p.add_argument("--out_dir",       type=str, default="./runs/meta_ot_color")
+    p.add_argument("--n_clusters",    type=int, default=None)
+    p.add_argument("--num_train_iter",type=int, default=None)
+    p.add_argument("--learning_rate", type=float, default=None)
+    p.add_argument("--enc_dim",       type=int, default=None)
+    p.add_argument("--batch_size",    type=int, default=None)
+    p.add_argument("--epsilon",       type=float, default=None)
+    p.add_argument("--seed",          type=int, default=0)
+    p.add_argument("--gpu",           type=str, default="0")
     return p.parse_args()
 
 
@@ -34,13 +32,12 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     cfg_m = init_cfg("Meta_OT_Color")
-    if args.num_train_iter    is not None: cfg_m["num_train_iter"]    = args.num_train_iter
-    if args.lr                is not None: cfg_m["lr"]                = args.lr
-    if args.meta_batch_size   is not None: cfg_m["meta_batch_size"]   = args.meta_batch_size
-    if args.inner_batch_size  is not None: cfg_m["inner_batch_size"]  = args.inner_batch_size
-    if args.num_pretrain_iter is not None: cfg_m["num_pretrain_iter"] = args.num_pretrain_iter
-    if args.cycle_loss_weight is not None: cfg_m["cycle_loss_weight"] = args.cycle_loss_weight
-    if args.num_rgb_sample    is not None: cfg_m["num_rgb_sample"]    = args.num_rgb_sample
+    if args.n_clusters     is not None: cfg_m["n_clusters"]     = args.n_clusters
+    if args.num_train_iter is not None: cfg_m["num_train_iter"] = args.num_train_iter
+    if args.learning_rate  is not None: cfg_m["learning_rate"]  = args.learning_rate
+    if args.enc_dim        is not None: cfg_m["enc_dim"]        = args.enc_dim
+    if args.batch_size     is not None: cfg_m["batch_size"]     = args.batch_size
+    if args.epsilon        is not None: cfg_m["epsilon"]        = args.epsilon
     cfg_m["gpu"] = int(args.gpu) if args.gpu.isdigit() else 0
 
     cfg_proj = argparse.Namespace(
@@ -52,26 +49,37 @@ def main():
         gpu       = args.gpu,
     )
 
-    image_paths = get_image_paths(args.data_dir)
-    print(f"\n{'='*55}")
-    print(f"  Meta-OT Color Transfer (JAX port)")
-    print(f"  Architecture: ICNN dim_hidden={cfg_m['dim_hidden']}  ({653} params)")
-    print(f"  MetaICNN: ResNet18 x2 → MLP → D_flat, Dc_flat")
-    print(f"  Loss: W2GN dual + cycle (λ={cfg_m['cycle_loss_weight']})")
-    print(f"{'='*55}")
-    print(f"  data_dir        : {args.data_dir}  ({len(image_paths)} images)")
-    print(f"  num_train_iter  : {cfg_m['num_train_iter']}")
-    print(f"  num_pretrain    : {cfg_m['num_pretrain_iter']}")
-    print(f"  lr              : {cfg_m['lr']}")
-    print(f"  meta_batch_size : {cfg_m['meta_batch_size']}")
-    print(f"  inner_batch_size: {cfg_m['inner_batch_size']}")
-    print(f"{'='*55}\n")
-    assert len(image_paths) >= 2
+    n_clusters = cfg_m["n_clusters"]
+    print(f"\n{'='*60}")
+    print(f"  Meta-OT Color Transfer — DISCRETE (Sinkhorn dual)")
+    print(f"  Architecture: DeepSets → f, g = 1 Sinkhorn step from f")
+    print(f"  Loss: -Sinkhorn dual objective (faithful to JAX train.py)")
+    print(f"{'='*60}")
+    print(f"  data_dir       : {args.data_dir}")
+    print(f"  n_clusters     : {n_clusters}")
+    print(f"  enc_dim        : {cfg_m['enc_dim']}")
+    print(f"  head_hidden    : {cfg_m['head_hidden']}")
+    print(f"  num_train_iter : {cfg_m['num_train_iter']}")
+    print(f"  batch_size     : {cfg_m['batch_size']}")
+    print(f"  learning_rate  : {cfg_m['learning_rate']}")
+    print(f"  epsilon        : {cfg_m['epsilon']}")
+    print(f"{'='*60}\n")
+
+    # Dataloader — same as OT_Regression_Sliced_Color
+    print("Quantizing images (cached after first run) ...")
+    train_loader = get_color_transfer_dataloader(
+        image_dir   = args.data_dir,
+        n_clusters  = n_clusters,
+        batch_size  = cfg_m["batch_size"],
+        seed        = args.seed,
+        num_workers = 0,
+    )
+    print(f"  Dataset: {len(train_loader.dataset)} pairs")
 
     model = Meta_OT_Color(cfg_proj=cfg_proj, cfg_m=cfg_m)
 
     t0 = time.perf_counter()
-    model.train(args.data_dir)
+    model.train(train_loader)
     t_train = time.perf_counter() - t0
     print(f"\nTraining: {t_train:.1f}s  ({t_train/3600:.2f}h)")
 
@@ -81,14 +89,17 @@ def main():
     print(f"Model → {model_path}")
 
     # Sanity check
-    if len(image_paths) >= 2:
-        print("\nSanity check: apply_map ...")
-        src = np.array(Image.open(image_paths[0]).convert("RGB"))
-        tgt = np.array(Image.open(image_paths[1]).convert("RGB"))
-        t0  = time.perf_counter()
-        out = model.apply_map(src, tgt)
-        print(f"  {src.shape} → {out.shape}  time={time.perf_counter()-t0:.3f}s")
-
+    print("\nSanity check: predict_plan on one test pair ...")
+    ds = train_loader.dataset
+    src_w, src_c, tgt_w, tgt_c = ds[0]
+    a  = src_w.numpy(); sc = src_c.numpy()
+    b  = tgt_w.numpy(); tc = tgt_c.numpy()
+    t0 = time.perf_counter()
+    P  = model.predict_plan(a, b, sc, tc)
+    print(f"  Plan: {P.shape}  sum={P.sum():.4f}  "
+          f"marginal_a_err={np.abs(P.sum(1)-a).max():.6f}  "
+          f"marginal_b_err={np.abs(P.sum(0)-b).max():.6f}  "
+          f"time={time.perf_counter()-t0:.3f}s")
     print("\nDone. Run eval_color_transfer.py to evaluate.")
 
 
