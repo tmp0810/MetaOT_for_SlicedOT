@@ -55,14 +55,14 @@ class PotentialNet(nn.Module):
         return self.f_head(torch.cat([z_src, z_tgt], dim=-1))
 
 
-class Meta_OT_Color_Discrete(Defense_Train_Base):
+class Meta_OT_Color(Defense_Train_Base):
 
     # is_continuous = False  (default) → eval_color_transfer.py dùng predict_plan
     is_continuous = False
 
     def __init__(self, cfg_proj, cfg_m):
         Defense_Train_Base.__init__(self, cfg_proj, cfg_m,
-                                    name="Meta_OT_Color_Discrete")
+                                    name="Meta_OT_Color")
         self._build_network()
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -87,11 +87,11 @@ class Meta_OT_Color_Discrete(Defense_Train_Base):
 
         n_p = sum(p.numel() for p in self.net.parameters())
         self.logger.info(
-            f"[Meta_OT_Color_Discrete] PotentialNet  params={n_p:,}  "
+            f"[Meta_OT_Color] PotentialNet  params={n_p:,}  "
             f"n_clusters={n_clusters}  enc_dim={enc_dim}  head_hidden={head_hidden}"
         )
 
-    # ── core OT operations (faithful to JAX train_discrete.py) ───────────────
+    # ── core OT operations (faithful to JAX train.py) ───────────────
 
     @staticmethod
     def _compute_log_K(src_c: torch.Tensor, tgt_c: torch.Tensor,
@@ -179,14 +179,14 @@ class Meta_OT_Color_Discrete(Defense_Train_Base):
             opt, T_max=n_iters, eta_min=lr * 0.01)
 
         self.logger.info(
-            f"[Meta_OT_Color_Discrete] Training  n_iters={n_iters}  "
+            f"[Meta_OT_Color] Training  n_iters={n_iters}  "
             f"lr={lr}  eps={eps}"
         )
 
         loss_ema = None
         step     = 0
         t0       = time.time()
-        pbar     = tqdm(total=n_iters, desc="Meta_OT_Color_Discrete")
+        pbar     = tqdm(total=n_iters, desc="Meta_OT_Color")
 
         while step < n_iters:
             for src_w, src_c, tgt_w, tgt_c in dataloader_train:
@@ -232,7 +232,7 @@ class Meta_OT_Color_Discrete(Defense_Train_Base):
         pbar.close()
         ckpt = os.path.join(self.log_sub_folder, "net.pt")
         torch.save(self.net.state_dict(), ckpt)
-        self.logger.info(f"[Meta_OT_Color_Discrete] Saved → {ckpt}")
+        self.logger.info(f"[Meta_OT_Color] Saved → {ckpt}")
 
     # ── inference ─────────────────────────────────────────────────────────────
 
