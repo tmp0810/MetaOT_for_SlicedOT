@@ -18,6 +18,14 @@ from Data.color_meta_data import (
 )
 
 def build_icnn_layout(dim_hidden=(128,), input_dim=3, quad_rank=3):
+    """
+    Flat parameter layout for ICNN with dim_hidden=[128]:
+      wx0_w (128,3)=384   wx0_b (128,)=128
+      wx1_w (1,3)=3       wx1_b (1,)=1
+      wz0_w_raw (1,128)=128   (softplus → positive weights)
+      L (3,3)=9
+      TOTAL = 653
+    """
     layout     = []
     num_hidden = len(dim_hidden)
 
@@ -49,6 +57,7 @@ def unpack_icnn_params(params_flat, layout):
         offset  += n
     return d
 
+
 def icnn_forward(X, params_flat, layout, dim_hidden, act=F.leaky_relu):
     p          = unpack_icnn_params(params_flat, layout)
     num_hidden = len(dim_hidden)
@@ -75,18 +84,30 @@ def icnn_forward(X, params_flat, layout, dim_hidden, act=F.leaky_relu):
 
 
 def push_grad(X, params_flat, layout, dim_hidden, create_graph=True):
-    if not X.requires_grad:
-        X = X.detach().requires_grad_(True)
-    y    = icnn_forward(X, params_flat, layout, dim_hidden)   # (N,)
-    grad = torch.autograd.grad(
-        y.sum(), X,
-        create_graph=create_graph,
-        retain_graph=True,
-    )[0]
+    """
+    Port of JAX push_grad:
+        jax.vmap(jax.grad(D.apply, argnums=1)({"params": params}, x))(X)
+
+    X           : (N, d)  — may have requires_grad from prior push_grad (cycle loss)
+    params_flat : (P,)    — from MetaICNN, has grad
+    create_graph: True during training for higher-order grads (cycle loss needs this)
+    Returns     : (N, d)
+    """
+    # torch.enable_grad() ensures autograd works even when called inside
+    # torch.no_grad() context (e.g. apply_map inference path).
+    with torch.enable_grad():
+        if not X.requires_grad:
+            X = X.detach().requires_grad_(True)
+        y    = icnn_forward(X, params_flat, layout, dim_hidden)   # (N,)
+        grad = torch.autograd.grad(
+            y.sum(), X,
+            create_graph=create_graph,
+            retain_graph=create_graph,
+        )[0]
     return grad   # (N, d)
 
-
 class MetaICNN_Color(nn.Module):
+
     def __init__(self, num_icnn_params: int, bottleneck_size: int = 512,
                  fc_num_hidden_units: int = 512, fc_num_hidden_layers: int = 2):
         super().__init__()
@@ -118,6 +139,7 @@ class MetaICNN_Color(nn.Module):
         out = self.fc(z)
         return out.split(self.num_icnn_params, dim=-1)
 
+
 class Meta_OT_Color(Defense_Train_Base):
 
     is_continuous = True   # flag for eval_color_transfer.py dispatch
@@ -143,6 +165,7 @@ class Meta_OT_Color(Defense_Train_Base):
         )
         self._build_network()
 
+    # ── helpers ──────────────────────────────────────────────────────────────
 
     def _device(self):
         if torch.cuda.is_available() and hasattr(self.cfg_m, "gpu"):
@@ -160,6 +183,7 @@ class Meta_OT_Color(Defense_Train_Base):
         n_p = sum(p.numel() for p in self.meta_icnn.parameters())
         self.logger.info(f"[Meta_OT_Color] MetaICNN_Color  params={n_p:,}")
 
+    # ── loss (faithful to JAX train_color_single.py / train_color_meta.py) ───
 
     def _loss_single(self, D_p, Dc_p, X, Y):
         cfg = self.cfg_m
@@ -198,11 +222,6 @@ class Meta_OT_Color(Defense_Train_Base):
     # ── pretrain identity ─────────────────────────────────────────────────────
 
     def _pretrain_identity(self, pair_sampler, val_pairs=None):
-        """
-        Pretrain MetaICNN so push_grad(D, x) ≈ push_grad(Dc, x) ≈ x.
-
-        JAX: X = 2.*(uniform([N,3])-.5)+.5  → range [-0.5, 1.5]^3
-        """
         cfg    = self.cfg_m
         device = self.meta_icnn.resnet.fc.weight.device
         n_iter = int(cfg.get("num_pretrain_iter") or 5000)
@@ -260,9 +279,6 @@ class Meta_OT_Color(Defense_Train_Base):
     # ── main training ─────────────────────────────────────────────────────────
 
     def train(self, image_dir: str):
-        """
-        Port of JAX Workspace.run() in train_color_meta.py.
-        """
         cfg    = self.cfg_m
         device = self.meta_icnn.resnet.fc.weight.device
 
@@ -415,8 +431,8 @@ class Meta_OT_Color(Defense_Train_Base):
             end     = min(start + pixel_batch, len(pixels))
             X_batch = torch.tensor(
                 pixels[start:end], dtype=torch.float32, device=device)
-            with torch.no_grad():
-                pushed = push_grad(X_batch, D_p, li, dh, create_graph=False).detach()
+            # push_grad calls torch.enable_grad() internally — works correctly here
+            pushed = push_grad(X_batch, D_p, li, dh, create_graph=False).detach()
             result[start:end] = pushed.cpu().numpy()
 
         result = np.clip(result, 0.0, 1.0)
