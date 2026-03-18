@@ -17,25 +17,16 @@ def init_cfg(n_solver):
         cfg_m.insert("MLP_hidden_num", 3)
 
     elif n_solver == "Meta_OT_Color":
-        cfg_m.insert("dim_hidden",          [128])  # single hidden layer of 128 units
-        cfg_m.insert("quad_rank",              3)   # quadratic term rank
-        cfg_m.insert("bottleneck_size",      512)   # ResNet18 output × 2 → concat
-        cfg_m.insert("fc_num_hidden_units",  512)
-        cfg_m.insert("fc_num_hidden_layers",   2)
-        cfg_m.insert("num_train_iter",     50000)
-        cfg_m.insert("lr",                  1e-4)   # main training LR
-        cfg_m.insert("meta_batch_size",        4)   # B pairs per gradient step
-        cfg_m.insert("inner_batch_size",     256)   # N pixels per pair
-        cfg_m.insert("cycle_loss_weight",    0.1)   # λ_cyc (JAX default)
-        cfg_m.insert("l2_penalty",          1e-5)   # λ_l2
-        cfg_m.insert("max_grad_norm",        1.0)
-        cfg_m.insert("num_pretrain_iter",  10000)
-        cfg_m.insert("pretrain_lr",         1e-3)
-        cfg_m.insert("pretrain_loss_threshold", 1e-3)
-        cfg_m.insert("num_rgb_sample",      None)   # None = use all pixels
-        cfg_m.insert("epsilon",              0.5)
-        cfg_m.insert("n_clusters",           500)   # for discrete Sinkhorn baseline
-        cfg_m.insert("log_interval",        1000)
+        cfg_m.insert("n_clusters",    500)   # KMeans clusters per image
+        cfg_m.insert("enc_dim",       256)   # DeepSets encoder output dim
+        cfg_m.insert("head_hidden",   512)   # f_head hidden dim
+        cfg_m.insert("num_train_iter", 5000)
+        cfg_m.insert("learning_rate",  1e-3)
+        cfg_m.insert("max_grad_norm",  1.0)
+        cfg_m.insert("batch_size",     4)    # pairs per gradient step
+        cfg_m.insert("log_interval",   100)
+        cfg_m.insert("epsilon",        0.5)
+        # ── Hardware ───────────────────────────────────────────────────
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
  
