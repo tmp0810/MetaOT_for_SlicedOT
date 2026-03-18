@@ -25,28 +25,7 @@ def init_cfg(n_solver):
         cfg_m.insert("max_grad_norm",  1.0)
         cfg_m.insert("batch_size",     4)    # pairs per gradient step
         cfg_m.insert("log_interval",   100)
-        cfg_m.insert("epsilon",        0.005)
-        # ── Hardware ───────────────────────────────────────────────────
-        cfg_m.insert("device", "cuda")
-        cfg_m.insert("gpu", 0)
- 
-    elif n_solver == "Meta_OT_World":
-        cfg_m.insert("icnn_hidden_dim",   32)
-        cfg_m.insert("icnn_hidden_num",   2)
-        cfg_m.insert("enc_dim",           128)
-        cfg_m.insert("meta_hidden_dim",   256)
-        cfg_m.insert("num_train_iter",    5000)
-        cfg_m.insert("pretrain_iter",     500)
-        cfg_m.insert("learning_rate",     1e-3)
-        cfg_m.insert("cycle_loss_weight", 10.0)
-        cfg_m.insert("n_inner_samples",   256)
-        cfg_m.insert("batch_size",        1)
-        cfg_m.insert("n_supply",          100)
-        cfg_m.insert("n_demand",          10_000)
-        cfg_m.insert("supply_bernoulli_p",0.5)
-        cfg_m.insert("epsilon",           0.5)
-        cfg_m.insert("sinkhorn_iters",    0)
-        cfg_m.insert("log_interval",      200)
+        cfg_m.insert("epsilon",        0.1)
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
 
