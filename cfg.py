@@ -25,7 +25,7 @@ def init_cfg(n_solver):
         cfg_m.insert("max_grad_norm",  1.0)
         cfg_m.insert("batch_size",     4)    # pairs per gradient step
         cfg_m.insert("log_interval",   100)
-        cfg_m.insert("epsilon",        0.5)
+        cfg_m.insert("epsilon",        0.005)
         # ── Hardware ───────────────────────────────────────────────────
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
