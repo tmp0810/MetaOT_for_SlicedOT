@@ -85,44 +85,53 @@ class Meta_OT_World(Defense_Train_Base):
             f"n_hidden={n_hidden}  n_hidden_layer={n_hidden_layer}"
         )
 
- 
-    def _g_and_f_from_f_pred(
+    def _g_from_f(
         self,
-        f_pred: torch.Tensor,  # (B, n_supply)
-        a:      torch.Tensor,  # (B, n_supply)
-        b:      torch.Tensor,  # (B, n_demand)
-        log_K:  torch.Tensor,  # (n_supply, n_demand)
-        eps:    float,
-    ):
-        log_b = torch.log(b.clamp(min=1e-300))
-        M_g = log_K.unsqueeze(0) + (f_pred / eps).unsqueeze(-1)
-        m_g = M_g.max(dim=-2, keepdim=True).values
-        lse_g = (M_g - m_g).exp().sum(dim=-2).log() + m_g.squeeze(-2)
-        g_sink = eps * (log_b - lse_g)
-        log_a = torch.log(a.clamp(min=1e-300))
-        M_f = log_K.unsqueeze(0) + (g_sink / eps).unsqueeze(-2)
-        m_f = M_f.max(dim=-1, keepdim=True).values
-        lse_f = (M_f - m_f).exp().sum(dim=-1).log() + m_f.squeeze(-1)
-        f_sink = eps * (log_a - lse_f)
-
-        return g_sink, f_sink
+        f:     torch.Tensor,   # (B, n_supply)  — f_pred from MLP, NOT updated
+        b:     torch.Tensor,   # (B, n_demand)
+        log_K: torch.Tensor,   # (n_supply, n_demand)
+        eps:   float,
+    ) -> torch.Tensor:
+        log_b = torch.log(b.clamp(min=1e-300))                       # (B, n_demand)
+        M     = log_K.unsqueeze(0) + (f / eps).unsqueeze(-1)         # (B, n_supply, n_demand)
+        m     = M.max(dim=-2, keepdim=True).values
+        lse   = (M - m).exp().sum(dim=-2).log() + m.squeeze(-2)      # (B, n_demand)
+        return eps * (log_b - lse)
 
     def _dual_obj_from_f(
         self,
-        a:     torch.Tensor,
-        b:     torch.Tensor,
-        f:     torch.Tensor,   # Đây là f_pred từ MLP
-        log_K: torch.Tensor,
+        a:     torch.Tensor,   # (B, n_supply)
+        b:     torch.Tensor,   # (B, n_demand)
+        f:     torch.Tensor,   # (B, n_supply) — f_pred from MLP
+        log_K: torch.Tensor,   # (n_supply, n_demand)
         eps:   float,
     ) -> torch.Tensor:
-        
-        g_sink, f_sink = self._g_and_f_from_f_pred(f, a, b, log_K, eps)
-        dual_obj_left = (f_sink * a).sum(dim=-1) + (g_sink * b).sum(dim=-1)
-        log_P = (f_sink.unsqueeze(-1) + g_sink.unsqueeze(-2)) / eps + log_K.unsqueeze(0)
-        lp_max = log_P.detach().max() 
-        P_sum = (log_P - lp_max).exp().sum(dim=(-2, -1)) * lp_max.exp()
-        dual = dual_obj_left - eps * P_sum + eps
+        # Step 1: g from f (1 Sinkhorn step, f unchanged)
+        g = self._g_from_f(f, b, log_K, eps)           # (B, n_demand)
 
+        # Step 2: fa = potential_from_scaling(a)
+        # fa_i = eps*log(sum_j exp(log_K_ij + g_j/eps))
+        M_fa = log_K.unsqueeze(0) + (g / eps).unsqueeze(-2)   # (B, n_supply, n_demand)
+        m    = M_fa.max(dim=-1, keepdim=True).values
+        fa   = eps * ((M_fa - m).exp().sum(dim=-1).log() + m.squeeze(-1))  # (B, n_supply)
+
+        # Step 3: gb = potential_from_scaling(b)
+        # gb_j = eps*log(sum_i exp(log_K_ij + f_i/eps))
+        M_gb = log_K.unsqueeze(0) + (f / eps).unsqueeze(-1)   # (B, n_supply, n_demand)
+        m    = M_gb.max(dim=-2, keepdim=True).values
+        gb   = eps * ((M_gb - m).exp().sum(dim=-2).log() + m.squeeze(-2))  # (B, n_demand)
+
+        # Step 4: divergences
+        div_a = (a * (f - fa)).sum(dim=-1)    # (B,)
+        div_b = (b * (g - gb)).sum(dim=-1)    # (B,)
+
+        # Step 5: total_sum = sum_ij exp((f_i+g_j-C_ij)/eps)
+        log_P = (f.unsqueeze(-1) + g.unsqueeze(-2)) / eps + log_K.unsqueeze(0)
+        lp_max    = log_P.detach().max()
+        total_sum = (log_P - lp_max).exp().sum(dim=(-2, -1)) * lp_max.exp()
+
+        # Step 6: dual = div_a + div_b + eps*(1 - total_sum)
+        dual = div_a + div_b + eps * (1.0 - total_sum)
         return dual.mean() if dual.dim() > 0 else dual
 
 
@@ -198,35 +207,27 @@ class Meta_OT_World(Defense_Train_Base):
         a_t = torch.tensor(a, dtype=torch.float64, device=device).unsqueeze(0)
         b_t = torch.tensor(b, dtype=torch.float64, device=device).unsqueeze(0)
         C_t = torch.tensor(self.C_np, dtype=torch.float64, device=device)
-        log_K = -C_t / eps
+        log_K = -C_t / eps   # (n_supply, n_demand)
 
         with torch.no_grad():
-            f_pred = self.mlp(a_t, b_t)                      # (1, n_supply)
-            g_t, f_t = self._g_and_f_from_f_pred(f_pred, a_t, b_t, log_K, eps)  
-            
-            f = f_t[0].cpu().numpy()
-            g = g_t[0].cpu().numpy()
+            f_pred = self.mlp(a_t, b_t)                              # (1, n_supply)
+            g_t = self._g_from_f(f_pred, b_t, log_K, eps)           # (1, n_demand)
+
+            M_f   = log_K.unsqueeze(0) + (g_t / eps).unsqueeze(-2)  # (1, n_s, n_d)
+            m_f   = M_f.max(dim=-1, keepdim=True).values
+            lse_f = (M_f - m_f).exp().sum(dim=-1).log() + m_f.squeeze(-1)
+            f_t   = eps * (torch.log(a_t.clamp(1e-300)) - lse_f)    # (1, n_supply)
+
+            f = f_t[0].cpu().numpy()   # (n_supply,)
+            g = g_t[0].cpu().numpy()   # (n_demand,)
 
         log_P = f[:, None] / eps - self.C_np / eps + g[None, :] / eps
-
-        def lse(X, axis):
-            m = X.max(axis=axis, keepdims=True)
-            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
-
-        log_a = np.log(np.clip(a, 1e-300, None))
-        log_b = np.log(np.clip(b, 1e-300, None))
-        for _ in range(1):
-            log_u = log_a[:, None] - lse(log_P, axis=1)[:, None]
-            log_P = log_P + log_u
-            
-            log_v = log_b[None, :] - lse(log_P, axis=0)[None, :]
-            log_P = log_P + log_v
-
-        log_P -= log_P.max() 
+        log_P -= log_P.max()
         P = np.exp(log_P)
         P = np.clip(P, 0.0, None)
         s = P.sum()
         if s > 0:
             P /= s
-            
         return P
+
+
