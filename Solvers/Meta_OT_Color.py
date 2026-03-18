@@ -56,16 +56,12 @@ class PotentialNet(nn.Module):
 
 
 class Meta_OT_Color(Defense_Train_Base):
-
-    # is_continuous = False  (default) → eval_color_transfer.py dùng predict_plan
     is_continuous = False
 
     def __init__(self, cfg_proj, cfg_m):
         Defense_Train_Base.__init__(self, cfg_proj, cfg_m,
                                     name="Meta_OT_Color")
         self._build_network()
-
-    # ── helpers ──────────────────────────────────────────────────────────────
 
     def _device(self):
         if torch.cuda.is_available() and hasattr(self.cfg_m, "gpu"):
@@ -91,31 +87,15 @@ class Meta_OT_Color(Defense_Train_Base):
             f"n_clusters={n_clusters}  enc_dim={enc_dim}  head_hidden={head_hidden}"
         )
 
-    # ── core OT operations (faithful to JAX train.py) ───────────────
-
     @staticmethod
     def _compute_log_K(src_c: torch.Tensor, tgt_c: torch.Tensor,
                        eps: float) -> torch.Tensor:
-        """
-        log_K[i,j] = -||src_c[i] - tgt_c[j]||² / eps
-        src_c : (n,3)   tgt_c : (m,3)
-        Returns : (n, m)
-        """
         diff  = src_c.unsqueeze(1) - tgt_c.unsqueeze(0)   # (n, m, 3)
         C     = (diff ** 2).sum(-1)                         # (n, m)
         return -C / eps
 
     def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
-        """
-        One Sinkhorn step: g update given f.
-        JAX: g = geom.update_potential(f, zeros, log_b, axis=0)
-           = eps * (log_b - lse(log_K + f/eps, axis=0))
-
-        f     : (B, n_src)
-        b     : (B, n_tgt)
-        log_K : (B, n_src, n_tgt)  or  (n_src, n_tgt) broadcastable
-        """
         log_b = torch.log(b.clamp(1e-300))                         # (B, n_tgt)
         M     = log_K + (f / eps).unsqueeze(-1)                    # (B, n_src, n_tgt)
         m     = M.max(dim=-2, keepdim=True).values
@@ -125,16 +105,6 @@ class Meta_OT_Color(Defense_Train_Base):
     def _dual_obj_from_f(self, a: torch.Tensor, b: torch.Tensor,
                          f: torch.Tensor, log_K: torch.Tensor,
                          eps: float) -> torch.Tensor:
-        """
-        Exact port of JAX dual_obj_from_f.
-
-        dual = div_a + div_b + eps*(1 - total_sum)
-
-        a, b  : (B, n)
-        f     : (B, n_src)
-        log_K : (B, n_src, n_tgt)
-        Returns: scalar
-        """
         g = self._g_from_f(f, b, log_K, eps)                       # (B, n_tgt)
 
         # fa_i = eps*log(sum_j exp(log_K_ij + g_j/eps))
@@ -157,14 +127,8 @@ class Meta_OT_Color(Defense_Train_Base):
         dual = div_a + div_b + eps * (1.0 - total)
         return dual.mean()
 
-    # ── training ─────────────────────────────────────────────────────────────
 
     def train(self, dataloader_train):
-        """
-        Dataloader yields: (src_w, src_c, tgt_w, tgt_c)
-          src_w, tgt_w : (B, n_clusters)
-          src_c, tgt_c : (B, n_clusters, 3)
-        """
         device = self._device()
         cfg    = self.cfg_m
         eps    = float(cfg.epsilon)
@@ -234,8 +198,6 @@ class Meta_OT_Color(Defense_Train_Base):
         torch.save(self.net.state_dict(), ckpt)
         self.logger.info(f"[Meta_OT_Color] Saved → {ckpt}")
 
-    # ── inference ─────────────────────────────────────────────────────────────
-
     @staticmethod
     def _compute_cost(x_src: np.ndarray, x_tgt: np.ndarray) -> np.ndarray:
         """Squared-Euclidean cost. Used by eval_color_transfer.py."""
@@ -249,15 +211,6 @@ class Meta_OT_Color(Defense_Train_Base):
         src_c: np.ndarray,  # (n_src, 3) source cluster centers
         tgt_c: np.ndarray,  # (n_tgt, 3) target cluster centers
     ) -> np.ndarray:
-        """
-        Predict transport plan P (n_src, n_tgt).
-
-        Faithful to JAX pred_transport:
-          f = net(src_w, src_c, tgt_w, tgt_c)
-          g = g_from_f(f, b, log_K)  [1 Sinkhorn step]
-          f_new = update_f(f, g, log_K)  [1 more Sinkhorn step]
-          P = exp((f_new + g - C) / eps)
-        """
         device = self._device()
         eps    = float(self.cfg_m.epsilon)
 
@@ -272,10 +225,7 @@ class Meta_OT_Color(Defense_Train_Base):
         with torch.no_grad():
             f_t = self.net(a_t, sc_t, b_t, tc_t)          # (1, n_src)
 
-        # g from f (1 Sinkhorn step, same as training)
         g_t = self._g_from_f(f_t, b_t, log_K, eps)        # (1, n_tgt)
-
-        # update f once more (JAX pred_error does this for eval)
         M_f   = log_K + (g_t / eps).unsqueeze(-2)          # (1, n_src, n_tgt)
         m_f   = M_f.max(dim=-1, keepdim=True).values
         lse_f = (M_f - m_f).exp().sum(-1).log() + m_f.squeeze(-1)
@@ -284,14 +234,11 @@ class Meta_OT_Color(Defense_Train_Base):
         f_np  = f_new[0].cpu().numpy()
         g_np  = g_t[0].cpu().numpy()
         C_np  = self._compute_cost(src_c, tgt_c)
-
-        # Plan recovery (same as Meta_OT_World)
         log_P  = f_np[:, None] / eps - C_np / eps + g_np[None, :] / eps
         log_P -= log_P.max()
         P      = np.clip(np.exp(log_P), 0.0, None)
 
-        # Sinkhorn marginal projection (5 rounds)
-        for _ in range(5):
+        for _ in range(1):
             P = P * (a / P.sum(1).clip(1e-300))[:, None]
             P = P * (b / P.sum(0).clip(1e-300))[None, :]
         P = np.clip(P, 0.0, None)
