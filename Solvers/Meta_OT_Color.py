@@ -8,7 +8,6 @@ from tqdm import tqdm
 
 from Solvers.DefenseTrain import Defense_Train_Base
 
-
 class PointCloudEncoder(nn.Module):
     def __init__(self, coord_dim: int = 3, phi_hidden: int = 256, enc_dim: int = 256):
         super().__init__()
@@ -32,6 +31,7 @@ class PointCloudEncoder(nn.Module):
 
 
 class PotentialNet(nn.Module):
+
     def __init__(self, n_clusters: int, coord_dim: int = 3,
                  enc_dim: int = 256, head_hidden: int = 512):
         super().__init__()
@@ -55,8 +55,8 @@ class PotentialNet(nn.Module):
         return self.f_head(torch.cat([z_src, z_tgt], dim=-1))
 
 
-
 class Meta_OT_Color_Discrete(Defense_Train_Base):
+
     # is_continuous = False  (default) → eval_color_transfer.py dùng predict_plan
     is_continuous = False
 
@@ -291,7 +291,7 @@ class Meta_OT_Color_Discrete(Defense_Train_Base):
         P      = np.clip(np.exp(log_P), 0.0, None)
 
         # Sinkhorn marginal projection (5 rounds)
-        for _ in range(1):
+        for _ in range(5):
             P = P * (a / P.sum(1).clip(1e-300))[:, None]
             P = P * (b / P.sum(0).clip(1e-300))[None, :]
         P = np.clip(P, 0.0, None)
