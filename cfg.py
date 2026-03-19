@@ -86,12 +86,12 @@ def init_cfg(n_solver):
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
 
-    elif n_solver == "min_SWGG_GrayScale":
-        cfg_m.insert("img_size",       28)
-        cfg_m.insert("n_projections", 200)    # L random directions; d=2 → 200 is enough
-        cfg_m.insert("epsilon",        0.1)   # for Sinkhorn comparison only
-        cfg_m.insert("batch_size",      64)   # dataloader (test only)
-        cfg_m.insert("valid_rate",     0.0)
+    elif n_solver == "min_SWGG_World":
+        cfg_m.insert("n_projections", 200)    # d=3 → 200 directions is enough
+        cfg_m.insert("n_supply",      100)
+        cfg_m.insert("n_demand",    10_000)
+        cfg_m.insert("supply_bernoulli_p", 0.5)
+        cfg_m.insert("epsilon",       0.5)    # same as OT_Regression_Sliced_World
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
 
