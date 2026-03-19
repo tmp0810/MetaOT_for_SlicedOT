@@ -21,11 +21,6 @@ class PotentialMLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        """
-        a : (..., n_supply)
-        b : (..., n_demand)
-        → f : (..., n_supply)
-        """
         z = torch.cat([a, b], dim=-1)
         return self.net(z)
 
@@ -106,31 +101,23 @@ class Meta_OT_World(Defense_Train_Base):
         log_K: torch.Tensor,   # (n_supply, n_demand)
         eps:   float,
     ) -> torch.Tensor:
-        # Step 1: g from f (1 Sinkhorn step, f unchanged)
         g = self._g_from_f(f, b, log_K, eps)           # (B, n_demand)
 
-        # Step 2: fa = potential_from_scaling(a)
-        # fa_i = eps*log(sum_j exp(log_K_ij + g_j/eps))
         M_fa = log_K.unsqueeze(0) + (g / eps).unsqueeze(-2)   # (B, n_supply, n_demand)
         m    = M_fa.max(dim=-1, keepdim=True).values
         fa   = eps * ((M_fa - m).exp().sum(dim=-1).log() + m.squeeze(-1))  # (B, n_supply)
 
-        # Step 3: gb = potential_from_scaling(b)
-        # gb_j = eps*log(sum_i exp(log_K_ij + f_i/eps))
         M_gb = log_K.unsqueeze(0) + (f / eps).unsqueeze(-1)   # (B, n_supply, n_demand)
         m    = M_gb.max(dim=-2, keepdim=True).values
         gb   = eps * ((M_gb - m).exp().sum(dim=-2).log() + m.squeeze(-2))  # (B, n_demand)
 
-        # Step 4: divergences
         div_a = (a * (f - fa)).sum(dim=-1)    # (B,)
         div_b = (b * (g - gb)).sum(dim=-1)    # (B,)
-
-        # Step 5: total_sum = sum_ij exp((f_i+g_j-C_ij)/eps)
+        
         log_P = (f.unsqueeze(-1) + g.unsqueeze(-2)) / eps + log_K.unsqueeze(0)
         lp_max    = log_P.detach().max()
         total_sum = (log_P - lp_max).exp().sum(dim=(-2, -1)) * lp_max.exp()
 
-        # Step 6: dual = div_a + div_b + eps*(1 - total_sum)
         dual = div_a + div_b + eps * (1.0 - total_sum)
         return dual.mean() if dual.dim() > 0 else dual
 
@@ -146,7 +133,6 @@ class Meta_OT_World(Defense_Train_Base):
         log_interval = int(cfg.get("log_interval")    or 100)
         max_grad_norm = float(cfg.get("max_grad_norm") or 1.0)
 
-        # Precompute log_K on device
         C_t     = torch.tensor(self.C_np, dtype=torch.float64, device=device)
         log_K   = -C_t / eps   # (n_supply, n_demand) — fixed
 
@@ -171,10 +157,8 @@ class Meta_OT_World(Defense_Train_Base):
                 a = sw_b.to(device)   # (B, n_supply)
                 b = dw_b.to(device)   # (B, n_demand)
 
-                # Forward: MLP predicts f
                 f = self.mlp(a, b)    # (B, n_supply)
 
-                # Loss = -dual_obj (maximize dual = stable)
                 loss = -self._dual_obj_from_f(a, b, f, log_K, eps)
 
                 opt.zero_grad()
