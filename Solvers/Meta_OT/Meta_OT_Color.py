@@ -107,12 +107,10 @@ class Meta_OT_Color(Defense_Train_Base):
                          eps: float) -> torch.Tensor:
         g = self._g_from_f(f, b, log_K, eps)                       # (B, n_tgt)
 
-        # fa_i = eps*log(sum_j exp(log_K_ij + g_j/eps))
         M_fa = log_K + (g / eps).unsqueeze(-2)                      # (B, n_src, n_tgt)
         m    = M_fa.max(dim=-1, keepdim=True).values
         fa   = eps * ((M_fa - m).exp().sum(-1).log() + m.squeeze(-1))  # (B, n_src)
-
-        # gb_j = eps*log(sum_i exp(log_K_ij + f_i/eps))
+                             
         M_gb = log_K + (f / eps).unsqueeze(-1)                      # (B, n_src, n_tgt)
         m    = M_gb.max(dim=-2, keepdim=True).values
         gb   = eps * ((M_gb - m).exp().sum(-2).log() + m.squeeze(-2))  # (B, n_tgt)
@@ -157,23 +155,18 @@ class Meta_OT_Color(Defense_Train_Base):
                 if step >= n_iters:
                     break
 
-                # color_transfer_data.py yields float64 → cast to float32
                 src_w = src_w.to(device, dtype=torch.float32)   # (B, n)
                 src_c = src_c.to(device, dtype=torch.float32)   # (B, n, 3)
                 tgt_w = tgt_w.to(device, dtype=torch.float32)   # (B, n)
                 tgt_c = tgt_c.to(device, dtype=torch.float32)   # (B, n, 3)
                 B     = src_w.shape[0]
 
-                # Per-batch log_K (cost changes per image pair)
-                # (B, n_src, n_tgt) — computed on GPU
                 diff  = src_c.unsqueeze(2) - tgt_c.unsqueeze(1)   # (B, n, n, 3)
                 C_bat = (diff ** 2).sum(-1)                         # (B, n, n)
                 log_K = -C_bat / eps
 
-                # Forward: PotentialNet → f
                 f = self.net(src_w, src_c, tgt_w, tgt_c)           # (B, n)
 
-                # Loss = -dual_obj (maximize)
                 loss = -self._dual_obj_from_f(src_w, tgt_w, f, log_K, eps)
 
                 opt.zero_grad()
@@ -200,7 +193,6 @@ class Meta_OT_Color(Defense_Train_Base):
 
     @staticmethod
     def _compute_cost(x_src: np.ndarray, x_tgt: np.ndarray) -> np.ndarray:
-        """Squared-Euclidean cost. Used by eval_color_transfer.py."""
         diff = x_src[:, None, :] - x_tgt[None, :, :]
         return np.sum(diff ** 2, axis=-1)
 
