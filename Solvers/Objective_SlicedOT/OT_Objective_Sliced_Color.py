@@ -168,16 +168,13 @@ class OT_Objective_Sliced_Color(OT_Regression_Sliced_Color):
                      ) -> np.ndarray:
         eps = float(self.cfg_m.epsilon)
 
-        # Features
         Xf, _ = self._compute_features(a, b, src_c, tgt_c)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
         f_pred = Xf @ self.alpha   # (n,)
 
-        # Per-pair log_K
         C     = self._compute_cost(src_c, tgt_c)
         log_K = -C / eps
 
-        # g from f (Option A)
         f_t   = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
         b_t   = torch.tensor(b,      dtype=torch.float64, device=self.device)
         log_Kt = torch.tensor(log_K, dtype=torch.float64, device=self.device)
