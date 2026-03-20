@@ -114,14 +114,15 @@ def init_cfg(n_solver):
     elif n_solver == "OT_Objective_Sliced":
         cfg_m.insert("num_bootstrap",    50)    
         cfg_m.insert("num_train_iter", 5000)   
-        cfg_m.insert("num_projections", 100)    # L: sliced directions
+        cfg_m.insert("num_projections", 100) 
         cfg_m.insert("img_size",         28)
         cfg_m.insert("epsilon",        1e-2)    # same as Meta OT paper MNIST
         cfg_m.insert("learning_rate",  1e-3)    # Adam lr for α
-        cfg_m.insert("max_grad_norm",   1.0)    # gradient clipping
+        cfg_m.insert("max_grad_norm",   1.0)   
         cfg_m.insert("batch_size",       64)    # dataloader batch size
         cfg_m.insert("valid_rate",       0.0)
         cfg_m.insert("log_interval",   100)
+        cfg_m.insert("sinkhorn_iters", 800)     # for _evaluate GT comparison only
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
     return cfg_m
