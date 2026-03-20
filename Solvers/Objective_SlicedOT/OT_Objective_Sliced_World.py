@@ -18,12 +18,8 @@ class OT_Objective_Sliced_World(OT_Regression_Sliced_World):
                          supply_sph=supply_sph,
                          demand_sph=demand_sph)
         self.name = "OT_Objective_Sliced_World"
-        self.logger.info(
-            f"[OT_Objective_Sliced_World] Method 2  "
-            f"n_supply={self.n_supply}  n_demand={self.n_demand}")
 
     def _precompute_log_K(self) -> torch.Tensor:
-        """log_K = -C_arccos / eps. FIXED (supply/demand locations fixed)."""
         eps = float(self.cfg_m.epsilon)
         C_t = torch.tensor(self.C, dtype=torch.float64, device=self.device)
         return -C_t / eps   # (n_supply, n_demand)
@@ -33,15 +29,11 @@ class OT_Objective_Sliced_World(OT_Regression_Sliced_World):
                   b:     torch.Tensor,   # (n_demand,)
                   log_K: torch.Tensor,   # (n_supply, n_demand)
                   eps:   float) -> torch.Tensor:
-        """
-        One Sinkhorn step: g update given f.
-        g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)
-        """
-        log_b = torch.log(b.clamp(1e-300))                      # (n_demand,)
-        M     = log_K + f.unsqueeze(1) / eps                    # (n_supply, n_demand)
-        m     = M.max(dim=0, keepdim=True).values               # (1, n_demand)
-        lse   = (M - m).exp().sum(dim=0).log() + m.squeeze(0)  # (n_demand,)
-        return eps * (log_b - lse)                               # (n_demand,)
+        log_b = torch.log(b.clamp(1e-300))                
+        M     = log_K + f.unsqueeze(1) / eps                  
+        m     = M.max(dim=0, keepdim=True).values             
+        lse   = (M - m).exp().sum(dim=0).log() + m.squeeze(0) 
+        return eps * (log_b - lse)                              
 
     def _dual_obj_from_f(self,
                          a:     torch.Tensor,   # (n_supply,)
@@ -50,8 +42,6 @@ class OT_Objective_Sliced_World(OT_Regression_Sliced_World):
                          log_K: torch.Tensor,   # (n_supply, n_demand)
                          eps:   float) -> torch.Tensor:
         g = self._g_from_f(f, b, log_K, eps)                  
-
-        # fa = ε·lse_j(log_K[i,j] + g[j]/ε)
         M_fa = log_K + g.unsqueeze(0) / eps                
         m    = M_fa.max(dim=1, keepdim=True).values
         fa   = eps * ((M_fa - m).exp().sum(1).log() + m.squeeze(1))  
@@ -83,7 +73,6 @@ class OT_Objective_Sliced_World(OT_Regression_Sliced_World):
             f"M={M}  L={L}  eps={eps}  lr={lr}"
         )
 
-        # log_K FIXED (supply/demand locations never change)
         log_K = self._precompute_log_K()   # (n_supply, n_demand)
 
         self.logger.info(f"[OT_Objective_Sliced_World] Collecting M={M} pair pool ...")
