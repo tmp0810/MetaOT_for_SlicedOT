@@ -133,6 +133,13 @@ def main():
     print("Building test pairs ...")
     test_pairs = build_test_pairs(image_paths, args.N, args.n_clusters)
     print(f"  {len(test_pairs)} test pairs ready (seed={TEST_SEED})")
+
+    # Save test pairs for plot scripts
+    test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
+    os.makedirs(os.path.dirname(test_pairs_path), exist_ok=True)
+    with open(test_pairs_path, "wb") as _f:
+        pickle.dump(test_pairs, _f)
+    print(f"  Test pairs saved → {test_pairs_path}")
     results = []
 
     def make_train_loader(cfg_m):
