@@ -24,7 +24,7 @@ def init_cfg(n_solver):
         cfg_m.insert("learning_rate",  1e-3)
         cfg_m.insert("max_grad_norm",  1.0)
         cfg_m.insert("batch_size",     4)    # pairs per gradient step
-        cfg_m.insert("log_interval",   100)
+        cfg_m.insert("log_interval",   5000) # ban đầu là 100
         cfg_m.insert("epsilon",        0.1)
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
@@ -82,7 +82,7 @@ def init_cfg(n_solver):
         cfg_m.insert("n_demand",       10_000)
         cfg_m.insert("supply_bernoulli_p", 0.5)
         cfg_m.insert("epsilon",          0.5)   # safe for arccos in [0,pi]
-        cfg_m.insert("log_interval",     100)
+        cfg_m.insert("log_interval",     5000)
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
 
@@ -121,7 +121,7 @@ def init_cfg(n_solver):
         cfg_m.insert("max_grad_norm",   1.0)   
         cfg_m.insert("batch_size",       64)    # dataloader batch size
         cfg_m.insert("valid_rate",       0.0)
-        cfg_m.insert("log_interval",   100)
+        cfg_m.insert("log_interval",   5000)
         cfg_m.insert("sinkhorn_iters", 800)     # for _evaluate GT comparison only
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
@@ -138,7 +138,7 @@ def init_cfg(n_solver):
         cfg_m.insert("max_grad_norm",   1.0)
         cfg_m.insert("batch_size",        1)
         cfg_m.insert("valid_rate",       0.0)
-        cfg_m.insert("log_interval",    100)
+        cfg_m.insert("log_interval",    5000)
         cfg_m.insert("sinkhorn_iters",  500)    # for sanity check only
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
@@ -154,7 +154,7 @@ def init_cfg(n_solver):
         cfg_m.insert("max_grad_norm",   1.0)
         cfg_m.insert("batch_size",        1)   
         cfg_m.insert("valid_rate",       0.0)
-        cfg_m.insert("log_interval",    100)
+        cfg_m.insert("log_interval",    5000)
         cfg_m.insert("sinkhorn_iters",  800)   
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
