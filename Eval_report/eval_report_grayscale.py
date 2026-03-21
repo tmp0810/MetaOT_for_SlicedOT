@@ -65,7 +65,6 @@ def save_model(model, path):
 
 
 def pairs_to_loader(pairs, batch_size=1):
-    """Wrap a list of (a,b) pairs into a DataLoader-like iterable."""
     # yields (_, _, a_batch, b_batch) to match existing _fit() interface
     import torch
     data = [(torch.zeros(1), torch.zeros(1),
@@ -105,7 +104,6 @@ def make_cfg_proj(solver, seed, gpu, flag_time):
                               data_name="MNIST", gpu=gpu)
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args = parse_args()
@@ -184,13 +182,12 @@ def main():
     from Models.ot_models import PotentialMLP
 
     cfg_meta = init_cfg("OT_Discrete")
-    # Data budget = M pairs (same as Regression/Objective).
-    # Compute budget = free: Meta OT needs many epochs to converge from random init.
-    # dl_train has exactly M pairs → epochs=500 means 500×M gradient steps,
-    # same way Objective runs num_train_iter=5000 steps on the M-pair pool.
-    cfg_meta["epochs"]       = 500
+    # Compute budget = 5000 gradient steps (same as Method 2 num_train_iter=5000).
+    # OT_Discrete uses epoch-based loop → epochs = 5000 // M to get ~5000 total steps.
+    T_target = 5000
+    cfg_meta["epochs"]       = max(1, T_target // args.M)
     cfg_meta["batch_size"]   = 1
-    cfg_meta["log_interval"] = 500   # save checkpoint only once at final epoch
+    cfg_meta["log_interval"] = max(1, T_target // args.M)  # save 1 checkpoint at end
 
     cfg_proj_meta = make_cfg_proj("OT_Discrete", TRAIN_SEED, args.gpu, flag_time)
     model_meta = OT_Discrete(cfg_proj_meta, cfg_meta)
