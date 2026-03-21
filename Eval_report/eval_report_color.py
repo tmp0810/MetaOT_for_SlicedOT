@@ -7,18 +7,31 @@ import numpy as np
 import ot
 from tqdm import tqdm
 from time import localtime, strftime
+from PIL import Image
+from sklearn.cluster import MiniBatchKMeans
+from torch.utils.data import DataLoader, Dataset
+import torch
 
 from cfg import init_cfg
-from Data.color_transfer_data import load_and_quantize, get_color_transfer_dataloader
+from Data.color_transfer_data import get_color_transfer_dataloader
 
 TRAIN_SEED = 0
 TEST_SEED  = 999
+EPS        = 0.005   # RGB space [0,1]^3: small distances → need small eps for sharp plans
 
 
-def sinkhorn_gt(a, b, C, eps, n_iter=1000):
-    a_s = np.clip(a, 1e-10, None); a_s /= a_s.sum()
-    b_s = np.clip(b, 1e-10, None); b_s /= b_s.sum()
-    return ot.sinkhorn(a_s, b_s, C, reg=eps, numItermax=n_iter, stopThr=1e-9)
+def quantize_image(img_path, n_clusters=500, seed=0):
+    img     = np.array(Image.open(img_path).convert("RGB"))
+    H, W, _ = img.shape
+    X       = img.reshape(-1, 3).astype(np.float32) / 255.0
+    km = MiniBatchKMeans(n_clusters=n_clusters, n_init=4,
+                         batch_size=min(4096, H*W), random_state=seed)
+    km.fit(X)
+    centroids = km.cluster_centers_.astype(np.float64)
+    labels    = km.labels_.astype(np.int64)
+    counts    = np.bincount(labels, minlength=n_clusters).astype(np.float64)
+    weights   = counts / counts.sum()
+    return img, weights, centroids, labels
 
 
 def build_test_pairs(image_paths, N, n_clusters, seed=TEST_SEED):
@@ -32,24 +45,66 @@ def build_test_pairs(image_paths, N, n_clusters, seed=TEST_SEED):
         i, j = rng.choice(len(image_paths), size=2, replace=False)
         pi, pj = image_paths[i], image_paths[j]
         if pi not in cache:
-            w, c, _, _ = load_and_quantize(pi, n_clusters, seed=0)
+            img, w, c, lbl = quantize_image(pi, n_clusters, seed=0)
+            cache[pi] = (img, w, c, lbl)
+        if pj not in cache:
+            img, w, c, lbl = quantize_image(pj, n_clusters, seed=0)
+            cache[pj] = (img, w, c, lbl)
+        src_img, sw, sc, sl = cache[pi]
+        tgt_img, tw, tc, _  = cache[pj]
+        pairs.append((sw, sc, sl, src_img, tw, tc, tgt_img, pi, pj))
+        pbar.update(1)
+    pbar.close()
+    return pairs[:N]
+
+
+def build_train_loader(image_paths, M, n_clusters, seed=TRAIN_SEED):
+    """Pre-sample M train pairs — shared by ALL methods."""
+    rng   = np.random.default_rng(seed)
+    cache = {}
+    pairs = []
+    pbar  = tqdm(total=M, desc="  Train pairs", leave=False)
+    attempts = 0
+    while len(pairs) < M and attempts < M * 20:
+        attempts += 1
+        i, j = rng.choice(len(image_paths), size=2, replace=False)
+        pi, pj = image_paths[i], image_paths[j]
+        if pi not in cache:
+            _, w, c, _ = quantize_image(pi, n_clusters, seed=0)
             cache[pi] = (w, c)
         if pj not in cache:
-            w, c, _, _ = load_and_quantize(pj, n_clusters, seed=0)
+            _, w, c, _ = quantize_image(pj, n_clusters, seed=0)
             cache[pj] = (w, c)
         sw, sc = cache[pi]
         tw, tc = cache[pj]
         pairs.append((sw, sc, tw, tc))
         pbar.update(1)
     pbar.close()
-    return pairs[:N]
+
+    class _DS(Dataset):
+        def __init__(self, data): self.data = data
+        def __len__(self): return len(self.data)
+        def __getitem__(self, k):
+            sw, sc, tw, tc = self.data[k]
+            return (torch.tensor(sw, dtype=torch.float64),
+                    torch.tensor(sc, dtype=torch.float64),
+                    torch.tensor(tw, dtype=torch.float64),
+                    torch.tensor(tc, dtype=torch.float64))
+    return DataLoader(_DS(pairs), batch_size=1, shuffle=False)
+
+
+# ── evaluation ────────────────────────────────────────────────────────────────
+
+def sinkhorn_gt(a, b, C, eps, n_iter=1000):
+    a_s = np.clip(a, 1e-10, None); a_s /= a_s.sum()
+    b_s = np.clip(b, 1e-10, None); b_s /= b_s.sum()
+    return ot.sinkhorn(a_s, b_s, C, reg=eps, numItermax=n_iter, stopThr=1e-9)
 
 
 def evaluate_color(predict_fn, test_pairs, eps, name):
-    """predict_fn(a, b, src_c, tgt_c) → P"""
-    from Solvers.Regression_SlicedOT.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
     rmse_list, time_list = [], []
-    for sw, sc, tw, tc in tqdm(test_pairs, desc=f"  Eval {name}", leave=False):
+    for sw, sc, _sl, _si, tw, tc, _ti, *_ in tqdm(test_pairs,
+                                                    desc=f"  Eval {name}", leave=False):
         diff = sc[:, None, :] - tc[None, :, :]
         C    = np.sum(diff**2, axis=-1)
         P_gt = sinkhorn_gt(sw, tw, C, eps)
@@ -60,22 +115,6 @@ def evaluate_color(predict_fn, test_pairs, eps, name):
     return np.array(rmse_list), np.array(time_list)
 
 
-
-def pairs_to_color_loader(pairs_list, batch_size=1):
-    """Wrap list of (sw,sc,tw,tc) into DataLoader yielding batched tensors."""
-    import torch
-    from torch.utils.data import DataLoader, Dataset
-    class _DS(Dataset):
-        def __init__(self, data): self.data = data
-        def __len__(self): return len(self.data)
-        def __getitem__(self, i):
-            sw, sc, tw, tc = self.data[i]
-            return (torch.tensor(sw, dtype=torch.float64),
-                    torch.tensor(sc, dtype=torch.float64),
-                    torch.tensor(tw, dtype=torch.float64),
-                    torch.tensor(tc, dtype=torch.float64))
-    return DataLoader(_DS(pairs_list), batch_size=batch_size, shuffle=False)
-
 def save_model(model, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
@@ -85,7 +124,7 @@ def save_model(model, path):
 
 def print_table(results, M, N):
     print(f"\n{'='*72}")
-    print(f"  Color Transfer  |  M={M} train pairs  |  N={N} test pairs")
+    print(f"  Color Transfer  |  M={M} train pairs  |  N={N} test pairs  |  eps={EPS}")
     print(f"{'='*72}")
     print(f"  {'Method':<28} {'RMSE_Plan':>14} {'Train (s)':>12} {'Infer (ms)':>12}")
     print(f"  {'-'*28} {'-'*14} {'-'*12} {'-'*12}")
@@ -110,11 +149,12 @@ def parse_args():
 
 
 def make_cfg_proj(solver, seed, gpu, flag_time):
-    import argparse as _ap
-    return _ap.Namespace(seed=seed, flag_time=flag_time,
-                         flag_load=None, solver=solver,
-                         data_name="color_transfer", gpu=gpu)
+    return argparse.Namespace(seed=seed, flag_time=flag_time,
+                              flag_load=None, solver=solver,
+                              data_name="color_transfer", gpu=gpu)
 
+
+# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args = parse_args()
@@ -127,57 +167,34 @@ def main():
         [glob.glob(os.path.join(args.data_dir, e)) for e in exts], []))
     assert len(image_paths) >= 2
     print(f"Found {len(image_paths)} images.")
-    eps = 0.5
 
-    # Fixed test pairs — same for ALL methods
-    print("Building test pairs ...")
+    # ── Build test + train pairs ONCE ─────────────────────────────────────
+    print(f"\nBuilding {args.N} test  pairs (seed={TEST_SEED}) ...")
     test_pairs = build_test_pairs(image_paths, args.N, args.n_clusters)
-    print(f"  {len(test_pairs)} test pairs ready (seed={TEST_SEED})")
-
-    # Save test pairs for plot scripts
     test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
-    os.makedirs(os.path.dirname(test_pairs_path), exist_ok=True)
-    with open(test_pairs_path, "wb") as _f:
-        pickle.dump(test_pairs, _f)
-    print(f"  Test pairs saved → {test_pairs_path}")
+    with open(test_pairs_path, "wb") as f:
+        pickle.dump(test_pairs, f)
+    print(f"  {len(test_pairs)} test pairs saved → {test_pairs_path}")
+
+    print(f"\nBuilding {args.M} train pairs (seed={TRAIN_SEED}) ...")
+    dl_shared = build_train_loader(image_paths, args.M, args.n_clusters)
+    print(f"  {args.M} train pairs ready — shared by all methods\n")
+
     results = []
 
-    def make_train_loader(cfg_m):
-        return get_color_transfer_dataloader(
-            image_dir=args.data_dir, n_clusters=args.n_clusters,
-            batch_size=cfg_m["batch_size"], seed=TRAIN_SEED,
-            max_pairs=args.M * 4, num_workers=0)
-
-    # ── Pre-sample M train pairs ONCE — shared by ALL methods ──────────────
-    print(f"Pre-sampling M={args.M} train pairs ...")
-    _tmp_loader = make_train_loader(init_cfg("OT_Regression_Sliced_Color"))
-    train_pairs_list = []
-    _pbar = tqdm(total=args.M, desc="  Sampling train pairs", leave=False)
-    for _sw, _sc, _tw, _tc in _tmp_loader:
-        for _i in range(_sw.shape[0]):
-            if len(train_pairs_list) >= args.M: break
-            train_pairs_list.append((
-                _sw[_i].numpy(), _sc[_i].numpy(),
-                _tw[_i].numpy(), _tc[_i].numpy()))
-            _pbar.update(1)
-        if len(train_pairs_list) >= args.M: break
-    _pbar.close()
-    print(f"  {len(train_pairs_list)} train pairs sampled (seed={TRAIN_SEED})")
-    dl_shared = pairs_to_color_loader(train_pairs_list, batch_size=1)
-
     # ── 1. OT Regression Sliced Color ─────────────────────────────────────
-    print("\n[1/4] OT Regression Sliced Color (Method 1) ...")
+    print("[1/4] OT Regression Sliced Color (Method 1) ...")
     from Solvers.Regression_SlicedOT.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
     cfg1 = init_cfg("OT_Regression_Sliced_Color")
-    cfg1["num_bootstrap"] = args.M; cfg1["n_clusters"] = args.n_clusters; cfg1["epsilon"] = eps
+    cfg1["num_bootstrap"] = args.M; cfg1["n_clusters"] = args.n_clusters
+    cfg1["epsilon"] = EPS
     model1 = OT_Regression_Sliced_Color(
         make_cfg_proj("OT_Regression_Sliced_Color", TRAIN_SEED, args.gpu, flag_time), cfg1)
     t0 = time.perf_counter()
     model1.alpha, model1.beta = model1._fit(dl_shared)
     t1 = time.perf_counter() - t0
     save_model(model1, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
-    # predict_plan(a, b, x_src, x_tgt) ✓
-    rmse1, tinf1 = evaluate_color(model1.predict_plan, test_pairs, eps, "OT_Regression")
+    rmse1, tinf1 = evaluate_color(model1.predict_plan, test_pairs, EPS, "OT_Regression")
     results.append(("OT Regression (M1)", rmse1, tinf1, t1))
     print(f"  Train: {t1:.1f}s  RMSE: {rmse1.mean():.2e}")
 
@@ -185,15 +202,15 @@ def main():
     print("\n[2/4] OT Objective Sliced Color (Method 2) ...")
     from Solvers.Objective_SlicedOT.OT_Objective_Sliced_Color import OT_Objective_Sliced_Color
     cfg2 = init_cfg("OT_Objective_Sliced_Color")
-    cfg2["num_bootstrap"] = args.M; cfg2["n_clusters"] = args.n_clusters; cfg2["epsilon"] = eps
+    cfg2["num_bootstrap"] = args.M; cfg2["n_clusters"] = args.n_clusters
+    cfg2["epsilon"] = EPS
     model2 = OT_Objective_Sliced_Color(
         make_cfg_proj("OT_Objective_Sliced_Color", TRAIN_SEED, args.gpu, flag_time), cfg2)
     t0 = time.perf_counter()
     model2.alpha = model2._fit(dl_shared)
     t2 = time.perf_counter() - t0
     save_model(model2, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
-    # predict_plan(a, b, src_c, tgt_c) ✓
-    rmse2, tinf2 = evaluate_color(model2.predict_plan, test_pairs, eps, "OT_Objective")
+    rmse2, tinf2 = evaluate_color(model2.predict_plan, test_pairs, EPS, "OT_Objective")
     results.append(("OT Objective (M2)", rmse2, tinf2, t2))
     print(f"  Train: {t2:.1f}s  RMSE: {rmse2.mean():.2e}")
 
@@ -201,15 +218,14 @@ def main():
     print("\n[3/4] Meta OT Color Discrete (baseline) ...")
     from Solvers.Meta_OT.Meta_OT_Color import Meta_OT_Color
     cfg3 = init_cfg("Meta_OT_Color")
-    cfg3["n_clusters"] = args.n_clusters; cfg3["epsilon"] = eps
+    cfg3["n_clusters"] = args.n_clusters; cfg3["epsilon"] = EPS
     model3 = Meta_OT_Color(
         make_cfg_proj("Meta_OT_Color", TRAIN_SEED, args.gpu, flag_time), cfg3)
     t0 = time.perf_counter()
     model3.train(dl_shared)
     t3 = time.perf_counter() - t0
     save_model(model3, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
-    # predict_plan(a, b, src_c, tgt_c) ✓
-    rmse3, tinf3 = evaluate_color(model3.predict_plan, test_pairs, eps, "Meta OT")
+    rmse3, tinf3 = evaluate_color(model3.predict_plan, test_pairs, EPS, "Meta OT")
     results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
     print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
@@ -217,12 +233,11 @@ def main():
     print("\n[4/4] min-SWGG Color (baseline, no training) ...")
     from Solvers.SWGG.min_SWGG_Color import min_SWGG_Color
     cfg4 = init_cfg("min_SWGG_Color")
-    cfg4["n_clusters"] = args.n_clusters; cfg4["epsilon"] = eps
+    cfg4["n_clusters"] = args.n_clusters; cfg4["epsilon"] = EPS
     model4 = min_SWGG_Color(
         make_cfg_proj("min_SWGG_Color", TRAIN_SEED, args.gpu, flag_time), cfg4)
     save_model(model4, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
-    # predict_plan(a, b, src_c, tgt_c) ✓
-    rmse4, tinf4 = evaluate_color(model4.predict_plan, test_pairs, eps, "min-SWGG")
+    rmse4, tinf4 = evaluate_color(model4.predict_plan, test_pairs, EPS, "min-SWGG")
     results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
     print(f"  RMSE: {rmse4.mean():.2e}")
 
