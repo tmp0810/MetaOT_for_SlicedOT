@@ -116,6 +116,15 @@ def main():
     test_pairs = [sample_pair(args.n_supply, args.n_demand, TEST_SEED + i)
                   for i in range(args.N)]
     print(f"  {len(test_pairs)} test pairs ready (seed={TEST_SEED})")
+
+    # Save test pairs for plot scripts
+    test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
+    os.makedirs(os.path.dirname(test_pairs_path), exist_ok=True)
+    with open(test_pairs_path, "wb") as _f:
+        pickle.dump({"pairs": test_pairs,
+                     "supply_euc": supply_euc, "demand_euc": demand_euc,
+                     "supply_sph": supply_sph, "demand_sph": demand_sph}, _f)
+    print(f"  Test pairs saved → {test_pairs_path}")
     # Pre-sample M train pairs ONCE — shared by ALL methods
     print(f"Pre-sampling M={args.M} train pairs (seed={TRAIN_SEED}) ...")
     train_pairs_list = [sample_pair(args.n_supply, args.n_demand,
