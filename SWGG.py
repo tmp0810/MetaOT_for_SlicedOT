@@ -147,9 +147,11 @@ def quantile_SWGG_CP(X,Y,a,b,theta):
     Y_line_sort,v=torch.sort(Y_line,axis=0)
 
     r_X=torch.cumsum(a[u],axis=0)
-    r_X=torch.cat((torch.zeros((1,n_proj)),r_X))
+    #r_X=torch.cat((torch.zeros((1,n_proj)),r_X))
+    r_X = torch.cat((torch.zeros((1,n_proj), device=r_X.device), r_X))
     r_Y=torch.cumsum(b[v],axis=0)
-    r_Y=torch.cat((torch.zeros((1,n_proj)),r_Y))
+    #r_Y=torch.cat((torch.zeros((1,n_proj)),r_Y))
+    r_Y = torch.cat((torch.zeros((1,n_proj), device=r_Y.device), r_Y))
     r,_=torch.sort(torch.cat((r_X,r_Y)),axis=0)
     r=r[1:-1]#Is the x-axis of the quantile function
     
