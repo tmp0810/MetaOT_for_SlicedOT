@@ -158,7 +158,8 @@ def main():
         make_cfg_proj("OT_Objective_Sliced_World", TRAIN_SEED, args.gpu, flag_time),
         cfg2, supply_euc, demand_euc, supply_sph, demand_sph)
     t0 = time.perf_counter()
-    model2.alpha, model2.beta = model2._fit(dl_shared)
+    model2.alpha = model2._fit(dl_shared)
+    model2.beta = np.zeros_like(model2.alpha)
     t2 = time.perf_counter() - t0
     save_model(model2, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
     rmse2, tinf2 = evaluate(model2.predict_plan, test_pairs, C, eps, "OT_Objective")
