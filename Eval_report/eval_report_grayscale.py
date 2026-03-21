@@ -183,6 +183,7 @@ def main():
     # same way Objective runs num_train_iter=5000 steps on the M-pair pool.
     cfg_meta["epochs"] = 500
     cfg_meta["batch_size"] = 1
+    cfg_meta["log_interval"] = 500
 
     cfg_proj_meta = make_cfg_proj("OT_Discrete", TRAIN_SEED, args.gpu, flag_time)
     model_meta = OT_Discrete(cfg_proj_meta, cfg_meta)
