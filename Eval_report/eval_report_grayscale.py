@@ -123,6 +123,13 @@ def main():
     test_pairs  = sample_pairs(args.N, seed=TEST_SEED)
     print(f"  → All 4 methods will use EXACTLY these same pairs.\n")
 
+    # Save test pairs so plot scripts can reload the exact same pairs
+    test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
+    os.makedirs(os.path.dirname(test_pairs_path), exist_ok=True)
+    with open(test_pairs_path, "wb") as _f:
+        pickle.dump(test_pairs, _f)
+    print(f"  Test pairs saved → {test_pairs_path}")
+
     dl_train = pairs_to_loader(train_pairs, batch_size=1)
     results  = []
 
@@ -181,9 +188,9 @@ def main():
     # Compute budget = free: Meta OT needs many epochs to converge from random init.
     # dl_train has exactly M pairs → epochs=500 means 500×M gradient steps,
     # same way Objective runs num_train_iter=5000 steps on the M-pair pool.
-    cfg_meta["epochs"] = 500
-    cfg_meta["batch_size"] = 1
-    cfg_meta["log_interval"] = 500
+    cfg_meta["epochs"]       = 500
+    cfg_meta["batch_size"]   = 1
+    cfg_meta["log_interval"] = 500   # save checkpoint only once at final epoch
 
     cfg_proj_meta = make_cfg_proj("OT_Discrete", TRAIN_SEED, args.gpu, flag_time)
     model_meta = OT_Discrete(cfg_proj_meta, cfg_meta)
