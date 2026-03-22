@@ -19,7 +19,6 @@ TRAIN_SEED = 0
 TEST_SEED  = 999
 EPS        = 0.005   # RGB space [0,1]^3: small distances → need small eps for sharp plans
 
-
 def quantize_image(img_path, n_clusters=500, seed=0):
     img     = np.array(Image.open(img_path).convert("RGB"))
     H, W, _ = img.shape
@@ -57,6 +56,8 @@ def build_test_pairs(image_paths, N, n_clusters, seed=TEST_SEED):
     pbar.close()
     return pairs[:N]
 
+
+# ── train pair DataLoader ─────────────────────────────────────────────────────
 
 def build_train_loader(image_paths, M, n_clusters, seed=TRAIN_SEED):
     """Pre-sample M train pairs — shared by ALL methods."""
@@ -102,12 +103,13 @@ def sinkhorn_gt(a, b, C, eps, n_iter=1000):
 
 
 def evaluate_color(predict_fn, test_pairs, eps, name):
+    # Warmup: eliminate CUDA cold-start outlier from timing
     if test_pairs:
         try:
             sw, sc, _sl, _si, tw, tc, _ti, *_ = test_pairs[0]
             predict_fn(sw, tw, sc, tc)
         except Exception: pass
- 
+
     rmse_list, time_list = [], []
     for sw, sc, _sl, _si, tw, tc, _ti, *_ in tqdm(test_pairs,
                                                     desc=f"  Eval {name}", leave=False):
@@ -197,7 +199,8 @@ def main():
     model1 = OT_Regression_Sliced_Color(
         make_cfg_proj("OT_Regression_Sliced_Color", TRAIN_SEED, args.gpu, flag_time), cfg1)
     t0 = time.perf_counter()
-    model1.alpha, model1.beta = model1._fit(dl_shared)
+    model1.alpha = model1._fit(dl_shared)
+    model1.beta  = np.zeros_like(model1.alpha)
     t1 = time.perf_counter() - t0
     save_model(model1, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
     rmse1, tinf1 = evaluate_color(model1.predict_plan, test_pairs, EPS, "OT_Regression")
