@@ -197,7 +197,7 @@ def main():
     results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
     print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
-    # ── 4. min-SWGG World ─────────────────────────────────────────────────
+    # ── 4. min-SWGG World ─────────────────────────────────────────────────--
     print("\n[4/4] min-SWGG World (baseline, no training) ...")
     from Solvers.SWGG.min_SWGG_World import min_SWGG_World
     cfg4 = init_cfg("min_SWGG_World")
