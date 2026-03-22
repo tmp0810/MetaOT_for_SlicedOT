@@ -49,30 +49,21 @@ class OT_Regression_Sliced(Defense_Train_Base):
         self.C = np.sum(diff ** 2, axis=-1)
 
     def _solve_entropic_ot(self, a: np.ndarray, b: np.ndarray):
-        eps = self.cfg_m.epsilon
+        eps    = self.cfg_m.epsilon
         a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
         b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
-        log_a = np.log(a_safe)
-        log_b = np.log(b_safe)
-        log_K = -self.C / eps
-
-        def lse(X, axis):
-            m = X.max(axis=axis, keepdims=True)
-            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
-
-        f = np.zeros_like(a_safe)
-        g = np.zeros_like(b_safe)
-        for _ in range(self.cfg_m.sinkhorn_iters):
-            g_new = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
-            f_new = eps * (log_a - lse(log_K + g_new[None, :] / eps, axis=1))
-            if np.max(np.abs(f_new - f)) < 1e-6:
-                f, g = f_new, g_new
-                break
-            f, g = f_new, g_new
-
-        if f.std() < 1e-8:
-            raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
-        return f, g
+        _, log_dict = ot.sinkhorn(
+            a_safe, b_safe, self.C,
+            reg=eps, numItermax=self.cfg_m.sinkhorn_iters,
+            stopThr=1e-5, log=True)
+        if 'alpha' in log_dict:
+            return log_dict['alpha'], log_dict['beta']
+        elif 'log_u' in log_dict:
+            return eps * log_dict['log_u'], eps * log_dict['log_v']
+        else:
+            u = log_dict.get('u', np.ones_like(a_safe))
+            v = log_dict.get('v', np.ones_like(b_safe))
+            return eps * np.log(np.clip(u, 1e-50, None)), eps * np.log(np.clip(v, 1e-50, None))
 
     def _compute_features(self, a: np.ndarray, b: np.ndarray):
         device = torch.device(
@@ -121,7 +112,6 @@ class OT_Regression_Sliced(Defense_Train_Base):
                 f_gt, g_gt = self._solve_entropic_ot(a, b)
 
                 eps = self.cfg_m.epsilon
-                f_gt = f_gt - eps * np.log(np.clip(a, 1e-10, None))
                 f_gt = f_gt - f_gt.mean()
 
                 Xf, _ = self._compute_features(a, b)
@@ -195,8 +185,6 @@ class OT_Regression_Sliced(Defense_Train_Base):
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
         f_pred = Xf @ alpha
         eps    = float(self.cfg_m.epsilon)
-        f_pred = f_pred + eps * np.log(np.clip(a, 1e-10, None))
-
         log_K = self._precompute_log_K()
         a_t   = torch.tensor(a,      dtype=torch.float64, device=self.device)
         f_t   = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
@@ -206,21 +194,19 @@ class OT_Regression_Sliced(Defense_Train_Base):
             f_t = self._f_from_g(g_t, a_t, log_K, eps)
         return f_t.cpu().numpy(), g_t.cpu().numpy()
 
-    def _potentials_to_plan(self, f: np.ndarray, g: np.ndarray) -> np.ndarray:
-        eps = self.cfg_m.epsilon
-
-        f_c = f - f.mean()
-        g_c = g - g.mean()
-
+    def _potentials_to_plan(self, a: np.ndarray, b: np.ndarray,
+                            f: np.ndarray, g: np.ndarray) -> np.ndarray:
+        eps   = self.cfg_m.epsilon
+        f_c   = f - f.mean()
+        g_c   = g - g.mean()
         log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
         log_P -= log_P.max()
         P = np.exp(log_P)
-
-        P = np.clip(P, 0.0, None)
-        P_sum = P.sum()
-        if P_sum > 0:
-            P /= P_sum
-        return P
+        r = P.sum(axis=1) + 1e-12
+        P = P * (a / r)[:, None]
+        c = P.sum(axis=0) + 1e-12
+        P = P * (b / c)[None, :]
+        return np.clip(P, 0.0, None)
 
     @staticmethod
     def interp(P, num_inter, batch_size, img_size):
@@ -268,10 +254,10 @@ class OT_Regression_Sliced(Defense_Train_Base):
             a, b = xs_a_np[idx], xs_b_np[idx]
 
             f_gt, g_gt = self._solve_entropic_ot(a, b)
-            P_gt        = self._potentials_to_plan(f_gt, g_gt)
+            P_gt        = self._potentials_to_plan(a, b, f_gt, g_gt)
 
             f_pred, g_pred = self._predict_potentials(a, b, alpha, beta)
-            P_pred          = self._potentials_to_plan(f_pred, g_pred)
+            P_pred          = self._potentials_to_plan(a, b, f_pred, g_pred)
 
             rmse_f = float(np.sqrt(np.mean((f_pred - f_gt) ** 2)))
             rmse_g = float(np.sqrt(np.mean((g_pred - g_gt) ** 2)))
