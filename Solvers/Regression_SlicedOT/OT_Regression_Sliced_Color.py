@@ -111,6 +111,8 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
 
     def _potentials_to_plan(
         self,
+        a: np.ndarray,
+        b: np.ndarray,
         f: np.ndarray,
         g: np.ndarray,
         C: np.ndarray = None,
@@ -121,15 +123,14 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         eps   = self.cfg_m.epsilon
         f_c   = f - f.mean()
         g_c   = g - g.mean()
-
         log_P = f_c[:, None] / eps - C / eps + g_c[None, :] / eps
         log_P -= log_P.max()
         P     = np.exp(log_P)
-        P     = np.clip(P, 0.0, None)
-        P_sum = P.sum()
-        if P_sum > 0:
-            P /= P_sum
-        return P
+        r = P.sum(axis=1) + 1e-12
+        P = P * (a / r)[:, None]
+        c = P.sum(axis=0) + 1e-12
+        P = P * (b / c)[None, :]
+        return np.clip(P, 0.0, None)
 
     def _fit(self, dataloader_train):
         M   = self.cfg_m.num_bootstrap
@@ -159,8 +160,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                     self.logger.warning(f"Skipping pair {count}: {e}")
                     continue
 
-                f_clean = f_gt - eps * np.log(np.clip(a, 1e-10, None))
-                f_clean -= f_clean.mean()
+                f_clean = f_gt - f_gt.mean()
 
                 Xf, _ = self._compute_features(a, b, x_src, x_tgt)
                 Xf -= Xf.mean(axis=0, keepdims=True)
@@ -228,8 +228,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
 
         Xf, _ = self._compute_features(a, b, x_src, x_tgt)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
-        f_transport = Xf @ self.alpha
-        f_pred = f_transport + eps * np.log(np.clip(a, 1e-10, None))
+        f_pred = Xf @ self.alpha
 
         log_Kt = torch.tensor(-C / eps, dtype=torch.float64, device=self.device)
         a_t    = torch.tensor(a,      dtype=torch.float64, device=self.device)
@@ -239,7 +238,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             g_t = self._g_from_f(f_t, b_t, log_Kt, eps)
             f_t = self._f_from_g(g_t, a_t, log_Kt, eps)
 
-        return self._potentials_to_plan(f_t.cpu().numpy(), g_t.cpu().numpy(), C)
+        return self._potentials_to_plan(a, b, f_t.cpu().numpy(), g_t.cpu().numpy(), C)
 
     def train(self, dataloader_train):
         self.alpha = self._fit(dataloader_train)
