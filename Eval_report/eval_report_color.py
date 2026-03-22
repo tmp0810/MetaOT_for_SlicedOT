@@ -102,6 +102,12 @@ def sinkhorn_gt(a, b, C, eps, n_iter=1000):
 
 
 def evaluate_color(predict_fn, test_pairs, eps, name):
+    if test_pairs:
+        try:
+            sw, sc, _sl, _si, tw, tc, _ti, *_ = test_pairs[0]
+            predict_fn(sw, tw, sc, tc)
+        except Exception: pass
+ 
     rmse_list, time_list = [], []
     for sw, sc, _sl, _si, tw, tc, _ti, *_ in tqdm(test_pairs,
                                                     desc=f"  Eval {name}", leave=False):
