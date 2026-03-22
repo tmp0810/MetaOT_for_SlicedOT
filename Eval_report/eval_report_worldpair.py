@@ -34,10 +34,11 @@ def sample_pair(n_supply, n_demand, seed):
 
 
 def evaluate(predict_fn, test_pairs, C, eps, name):
+    # Warmup: eliminate CUDA cold-start outlier from timing
     if test_pairs:
         try: predict_fn(*test_pairs[0])
         except Exception: pass
- 
+
     rmse_list, time_list = [], []
     for a, b in tqdm(test_pairs, desc=f"  Eval {name}", leave=False):
         P_gt = sinkhorn_gt(a, b, C, eps)
@@ -46,6 +47,7 @@ def evaluate(predict_fn, test_pairs, C, eps, name):
         time_list.append(time.perf_counter() - t0)
         rmse_list.append(float(np.sqrt(np.mean((P - P_gt)**2))))
     return np.array(rmse_list), np.array(time_list)
+
 
 def save_model(model, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -153,7 +155,8 @@ def main():
         make_cfg_proj("OT_Regression_Sliced_World", TRAIN_SEED, args.gpu, flag_time),
         cfg1, supply_euc, demand_euc, supply_sph, demand_sph)
     t0 = time.perf_counter()
-    model1.alpha, model1.beta = model1._fit(dl_shared)
+    model1.alpha = model1._fit(dl_shared)
+    model1.beta  = np.zeros_like(model1.alpha)
     t1 = time.perf_counter() - t0
     save_model(model1, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
     rmse1, tinf1 = evaluate(model1.predict_plan, test_pairs, C, eps, "OT_Regression")
