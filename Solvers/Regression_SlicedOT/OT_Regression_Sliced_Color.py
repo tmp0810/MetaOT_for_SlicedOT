@@ -46,30 +46,24 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         if C is None:
             raise ValueError("[Color] _solve_entropic_ot requires explicit C.")
 
+        import ot as pot
         eps    = self.cfg_m.epsilon
         a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
         b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
-        log_a  = np.log(a_safe)
-        log_b  = np.log(b_safe)
-        log_K  = -C / eps
 
-        def lse(X, axis):
-            m = X.max(axis=axis, keepdims=True)
-            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+        _, log_dict = pot.sinkhorn(
+            a_safe, b_safe, C,
+            reg=eps, numItermax=self.cfg_m.sinkhorn_iters,
+            stopThr=1e-5, log=True)
 
-        f = np.zeros_like(a_safe)
-        g = np.zeros_like(b_safe)
-        for _ in range(self.cfg_m.sinkhorn_iters):
-            g_new = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
-            f_new = eps * (log_a - lse(log_K + g_new[None, :] / eps, axis=1))
-            if np.max(np.abs(f_new - f)) < 1e-6:
-                f, g = f_new, g_new
-                break
-            f, g = f_new, g_new
-
-        if f.std() < 1e-8:
-            raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
-        return f, g
+        if 'alpha' in log_dict:
+            return log_dict['alpha'], log_dict['beta']
+        elif 'log_u' in log_dict:
+            return eps * log_dict['log_u'], eps * log_dict['log_v']
+        else:
+            u = log_dict.get('u', np.ones_like(a_safe))
+            v = log_dict.get('v', np.ones_like(b_safe))
+            return eps * np.log(np.clip(u, 1e-50, None)), eps * np.log(np.clip(v, 1e-50, None))
 
     def _compute_features(
         self,
