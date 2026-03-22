@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
+from Solvers.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
 from regression_OT_utils import (
     generate_uniform_unit_sphere_projections,
     emd1D_dual,
@@ -38,9 +38,10 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
+       n_src, n_tgt)
         diff = x_src[:, None, :] - x_tgt[None, :, :]   # (n_src, n_tgt, 3)
         return np.sum(diff ** 2, axis=-1)
-        
+
     def _solve_entropic_ot(
         self,
         a: np.ndarray,
@@ -75,7 +76,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
         return f, g
 
-
     def _compute_features(
         self,
         a: np.ndarray,
@@ -83,6 +83,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray = None,
         x_tgt: np.ndarray = None,
     ):
+    
         if x_src is None or x_tgt is None:
             raise ValueError("[Color] _compute_features requires x_src and x_tgt.")
 
@@ -121,10 +122,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         g: np.ndarray,
         C: np.ndarray = None,
     ) -> np.ndarray:
-        """
-        P_ij ∝ exp((f_i + g_j - C_ij) / ε).
-        Overrides parent to accept explicit C.
-        """
         if C is None:
             raise ValueError("[Color] _potentials_to_plan requires explicit C.")
 
@@ -190,8 +187,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                 if count % 20 == 0:
                     self.logger.info(
                         f"Pair {count}/{M}  "
-                        f"||f_clean||={np.linalg.norm(f_clean):.4f}  "
-                        f"||g_clean||={np.linalg.norm(g_clean):.4f}"
+                        f"||f_clean||={np.linalg.norm(f_clean):.4f}"
                     )
             if count >= M:
                 break
@@ -219,6 +215,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
 
     def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
+        """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
         log_b = torch.log(b.clamp(1e-300))
         M     = log_K + f.unsqueeze(1) / eps
         m     = M.max(dim=0, keepdim=True).values
@@ -232,6 +229,10 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
+        """
+        Inference: f = Φ_f @ α, g = g_from_f(f) via 1 Sinkhorn step.
+        Same pipeline as Method 2 for fair inference time comparison.
+        """
         eps = float(self.cfg_m.epsilon)
         C   = self._compute_cost(x_src, x_tgt)
 
