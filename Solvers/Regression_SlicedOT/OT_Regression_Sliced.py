@@ -19,13 +19,12 @@ def _ridge_regression(X, y, ridge=0.0):
         H = H + ridge * np.eye(H.shape[0])
     return np.linalg.solve(H, Xty)
 
-
 class OT_Regression_Sliced(Defense_Train_Base):
+
     def __init__(self, cfg_proj, cfg_m):
         Defense_Train_Base.__init__(self, cfg_proj, cfg_m, name="OT_Regression_Sliced")
         self._build_grid()
 
-        # --- fixed projection directions θ_1, …, θ_L  (L × 2) ---
         L = self.cfg_m.num_projections
         proj = generate_uniform_unit_sphere_projections(
             dim=2,
@@ -33,7 +32,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
             dtype=torch.float64,
             device="cpu",
         )
-        self.projection_matrix = proj.detach().numpy()   # (L, 2)
+        self.projection_matrix = proj.detach().numpy()
         self.logger.info(
             f"[OT_Regression_Sliced] projection_matrix: {self.projection_matrix.shape}, "
             f"num_bootstrap={self.cfg_m.num_bootstrap}, ridge={self.cfg_m.ridge}"
@@ -47,14 +46,9 @@ class OT_Regression_Sliced(Defense_Train_Base):
                 grid.append([j, i])
         self.x_grid = np.array(grid, dtype=np.float64)
         diff = self.x_grid[:, None, :] - self.x_grid[None, :, :]
-        self.C = np.sum(diff ** 2, axis=-1)                      # (n, n)
+        self.C = np.sum(diff ** 2, axis=-1)
 
     def _solve_entropic_ot(self, a: np.ndarray, b: np.ndarray):
-        """
-        Sinkhorn algorithm in log-space — Algorithm 1 from the paper.
-
-        Returns f, g directly.
-        """
         eps = self.cfg_m.epsilon
         a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
         b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
@@ -79,7 +73,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
         if f.std() < 1e-8:
             raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
         return f, g
-        
+
     def _compute_features(self, a: np.ndarray, b: np.ndarray):
         device = torch.device(
             f"cuda:{self.cfg_m.gpu}"
@@ -89,32 +83,26 @@ class OT_Regression_Sliced(Defense_Train_Base):
         n = len(a)
         L = self.projection_matrix.shape[0]
 
-        # proj_values[l, k] = x_grid[k] · θ_l  — projected position of pixel k
-        # along direction l.  Shape: (L, n)
         proj_values = torch.tensor(
-            (self.x_grid @ self.projection_matrix.T).T,   # (L, n)
+            (self.x_grid @ self.projection_matrix.T).T,
             dtype=torch.float64, device=device
         )
 
-        a_t = torch.tensor(a, dtype=torch.float64, device=device)  # (n,)
-        b_t = torch.tensor(b, dtype=torch.float64, device=device)  # (n,)
+        a_t = torch.tensor(a, dtype=torch.float64, device=device)
+        b_t = torch.tensor(b, dtype=torch.float64, device=device)
 
-        # emd1D_dual broadcasts (n,) weights to (L, n) internally.
-        # Returns f_grad, g_grad of shape (L, n).
         f_grad, g_grad, _ = emd1D_dual(
-            proj_values, proj_values,   # same support for source and target
+            proj_values, proj_values,
             u_weights=a_t,
             v_weights=b_t,
             p=2,
             require_sort=True,
         )
 
-        # Transpose (L, n) → (n, L) to match convention Xf[:, l] = f*_{θ_l}
-        Xf = f_grad.cpu().numpy().T   # (n, L)
-        Xg = g_grad.cpu().numpy().T   # (n, L)
+        Xf = f_grad.cpu().numpy().T
+        Xg = g_grad.cpu().numpy().T
 
         return Xf, Xg
-
 
     def _fit(self, dataloader_train):
         M = self.cfg_m.num_bootstrap
@@ -132,7 +120,6 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
                 f_gt, g_gt = self._solve_entropic_ot(a, b)
 
-                # ── Log-density correction ────────────────────────────────
                 eps = self.cfg_m.epsilon
                 f_gt = f_gt - eps * np.log(np.clip(a, 1e-10, None))
                 f_gt = f_gt - f_gt.mean()
@@ -177,56 +164,58 @@ class OT_Regression_Sliced(Defense_Train_Base):
         return alpha
 
     def _precompute_log_K(self) -> torch.Tensor:
-        """log_K = -C/eps. FIXED for MNIST (same pixel grid always)."""
         eps = float(self.cfg_m.epsilon)
         C_t = torch.tensor(self.C, dtype=torch.float64, device=self.device)
         return -C_t / eps
 
     def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
-        """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
         log_b = torch.log(b.clamp(1e-300))
         M     = log_K + f.unsqueeze(1) / eps
         m     = M.max(dim=0, keepdim=True).values
         lse   = (M - m).exp().sum(dim=0).log() + m.squeeze(0)
         return eps * (log_b - lse)
 
+    def _f_from_g(self, g: torch.Tensor, a: torch.Tensor,
+                  log_K: torch.Tensor, eps: float) -> torch.Tensor:
+        log_a = torch.log(a.clamp(1e-300))
+        M     = log_K + g.unsqueeze(0) / eps
+        m     = M.max(dim=1, keepdim=True).values
+        lse   = (M - m).exp().sum(dim=1).log() + m.squeeze(1)
+        return eps * (log_a - lse)
+
     def _predict_potentials(
         self,
         a: np.ndarray,
         b: np.ndarray,
         alpha: np.ndarray,
-        beta: np.ndarray = None,   # unused — g derived via 1 Sinkhorn step
+        beta: np.ndarray = None,
     ):
         Xf, _ = self._compute_features(a, b)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
-        f_pred = Xf @ alpha   # transport-only, log-density removed during fit
-
-        # Add back ε·log(a) to match raw Sinkhorn potential scale
+        f_pred = Xf @ alpha
         eps    = float(self.cfg_m.epsilon)
         f_pred = f_pred + eps * np.log(np.clip(a, 1e-10, None))
 
-        # Derive g via 1 Sinkhorn step (not from β)
         log_K = self._precompute_log_K()
+        a_t   = torch.tensor(a,      dtype=torch.float64, device=self.device)
         f_t   = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
         b_t   = torch.tensor(b,      dtype=torch.float64, device=self.device)
         with torch.no_grad():
             g_t = self._g_from_f(f_t, b_t, log_K, eps)
-        return f_pred, g_t.cpu().numpy()
+            f_t = self._f_from_g(g_t, a_t, log_K, eps)
+        return f_t.cpu().numpy(), g_t.cpu().numpy()
 
     def _potentials_to_plan(self, f: np.ndarray, g: np.ndarray) -> np.ndarray:
         eps = self.cfg_m.epsilon
 
-        # Centre potentials to prevent exp overflow / underflow
         f_c = f - f.mean()
         g_c = g - g.mean()
 
-        # Compute log-plan then shift by max for numerical stability
         log_P = f_c[:, None] / eps - self.C / eps + g_c[None, :] / eps
         log_P -= log_P.max()
         P = np.exp(log_P)
 
-        # Clip tiny negatives from floating-point noise, normalise to sum=1
         P = np.clip(P, 0.0, None)
         P_sum = P.sum()
         if P_sum > 0:
@@ -243,24 +232,20 @@ class OT_Regression_Sliced(Defense_Train_Base):
         x_grid = np.array(grid)
         y_grid = np.array(grid)
 
-        n_pixels = img_size * img_size   # n = 784 for img_size=28
+        n_pixels = img_size * img_size
         def get_hist(t, P_flat):
             map_samples = np.random.choice(range(len(P_flat)), size=batch_size, p=P_flat)
-            # P has shape (n_pixels, n_pixels), flat index = i * n_pixels + j
-            a_samples = x_grid[map_samples // n_pixels]   # source pixel index i
-            b_samples = y_grid[map_samples % n_pixels]    # target pixel index j
+            a_samples = x_grid[map_samples // n_pixels]
+            b_samples = y_grid[map_samples % n_pixels]
             proj_samples = (1.0 - t) * a_samples + t * b_samples
             hist, _, _ = np.histogram2d(
                 proj_samples[:, 1], proj_samples[:, 0],
                 bins=np.linspace(0.0, 1.0, num=img_size + 1),
             )
             hist = np.flipud(hist)
-            # Only clip if there are actually non-zero entries above the threshold.
-            # Using quantile on a sparse hist (many zeros) gives thresh=0
-            # which wipes everything → white image.
             nonzero = hist[hist > 0]
             if len(nonzero) > 0:
-                thresh = np.quantile(nonzero, 0.9)  # 90th pctile of NON-ZERO bins only
+                thresh = np.quantile(nonzero, 0.9)
                 if thresh > 0:
                     hist = np.clip(hist, 0, thresh)
             if hist.max() > 0:
@@ -270,10 +255,8 @@ class OT_Regression_Sliced(Defense_Train_Base):
         return [get_hist(t, P_flatten) for t in np.linspace(0, 1, num=num_inter)]
 
     def _evaluate(self, dataloader_test, alpha: np.ndarray, beta: np.ndarray):
-        """Compute transport plans, report RMSE in potentials, and save geodesics."""
         from Utils import utils
 
-        # Grab a small test batch
         for _, _, xs_a, xs_b in dataloader_test:
             xs_a_np = xs_a[:2].numpy()
             xs_b_np = xs_b[:2].numpy()
@@ -284,15 +267,12 @@ class OT_Regression_Sliced(Defense_Train_Base):
         for idx in range(len(xs_a_np)):
             a, b = xs_a_np[idx], xs_b_np[idx]
 
-            # Ground-truth potentials & plan
             f_gt, g_gt = self._solve_entropic_ot(a, b)
             P_gt        = self._potentials_to_plan(f_gt, g_gt)
 
-            # Predicted potentials & plan
             f_pred, g_pred = self._predict_potentials(a, b, alpha, beta)
             P_pred          = self._potentials_to_plan(f_pred, g_pred)
 
-            # Potential RMSE (both in full-potential space after fix)
             rmse_f = float(np.sqrt(np.mean((f_pred - f_gt) ** 2)))
             rmse_g = float(np.sqrt(np.mean((g_pred - g_gt) ** 2)))
             msg = (
@@ -302,8 +282,6 @@ class OT_Regression_Sliced(Defense_Train_Base):
             print(msg)
             self.logger.info(msg)
 
-            # Geodesic interpolation images — call via class, not self, to avoid
-            # Python treating P as a positional arg for the first parameter
             imgs_gt   = OT_Regression_Sliced.interp(P_gt,   num_inter=11, batch_size=50_000, img_size=img_size)
             imgs_pred = OT_Regression_Sliced.interp(P_pred, num_inter=11, batch_size=50_000, img_size=img_size)
 
