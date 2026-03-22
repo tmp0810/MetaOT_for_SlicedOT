@@ -9,25 +9,21 @@ from regression_OT_utils import (
     emd1D_dual,
 )
 
-
 class OT_Regression_Sliced_Color(OT_Regression_Sliced):
+
     def _build_grid(self):
-        """No fixed pixel grid — support varies per pair."""
         self.x_grid = None
         self.C      = None
 
     def __init__(self, cfg_proj, cfg_m):
-        # super().__init__ calls _build_grid (our override → no-op) and
-        # then sets self.projection_matrix with dim=2 (from pixel space).
         super().__init__(cfg_proj, cfg_m)
 
-        # Override projection directions: R^3 for RGB
         L    = self.cfg_m.num_projections
         proj = generate_uniform_unit_sphere_projections(
             dim=3, num_projections=L,
             dtype=torch.float64, device="cpu",
         )
-        self.projection_matrix = proj.detach().numpy()   # (L, 3)
+        self.projection_matrix = proj.detach().numpy()
         self.logger.info(
             f"[Color] projection_matrix: {self.projection_matrix.shape}  "
             f"dim=3 (RGB), L={L}"
@@ -38,7 +34,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-        diff = x_src[:, None, :] - x_tgt[None, :, :]   # (n_src, n_tgt, 3)
+        diff = x_src[:, None, :] - x_tgt[None, :, :]
         return np.sum(diff ** 2, axis=-1)
 
     def _solve_entropic_ot(
@@ -91,11 +87,10 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             else "cpu"
         )
         L        = self.projection_matrix.shape[0]
-        proj_mat = torch.tensor(self.projection_matrix, dtype=torch.float64, device=device)   # (L, 3)
-        src_t    = torch.tensor(x_src, dtype=torch.float64, device=device)   # (n_src, 3)
-        tgt_t    = torch.tensor(x_tgt, dtype=torch.float64, device=device)   # (n_tgt, 3)
+        proj_mat = torch.tensor(self.projection_matrix, dtype=torch.float64, device=device)
+        src_t    = torch.tensor(x_src, dtype=torch.float64, device=device)
+        tgt_t    = torch.tensor(x_tgt, dtype=torch.float64, device=device)
 
-        # (L, n_src), (L, n_tgt)
         proj_src = (src_t @ proj_mat.T).T
         proj_tgt = (tgt_t @ proj_mat.T).T
 
@@ -110,8 +105,8 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             require_sort=True,
         )
 
-        Xf = f_grad.cpu().numpy().T    # (n_src, L)
-        Xg = g_grad.cpu().numpy().T    # (n_tgt, L)
+        Xf = f_grad.cpu().numpy().T
+        Xg = g_grad.cpu().numpy().T
         return Xf, Xg
 
     def _potentials_to_plan(
@@ -120,10 +115,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         g: np.ndarray,
         C: np.ndarray = None,
     ) -> np.ndarray:
-        """
-        P_ij ∝ exp((f_i + g_j - C_ij) / ε).
-        Overrides parent to accept explicit C.
-        """
         if C is None:
             raise ValueError("[Color] _potentials_to_plan requires explicit C.")
 
@@ -155,15 +146,13 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                 if count >= M:
                     break
 
-                a     = src_w[i].numpy()      # (n_src,)
-                x_src = src_c[i].numpy()      # (n_src, 3)
-                b     = tgt_w[i].numpy()      # (n_tgt,)
-                x_tgt = tgt_c[i].numpy()      # (n_tgt, 3)
+                a     = src_w[i].numpy()
+                x_src = src_c[i].numpy()
+                b     = tgt_w[i].numpy()
+                x_tgt = tgt_c[i].numpy()
 
-                # Per-pair cost matrix (n_src, n_tgt)
                 C = self._compute_cost(x_src, x_tgt)
 
-                # Ground-truth Sinkhorn potentials
                 try:
                     f_gt, g_gt = self._solve_entropic_ot(a, b, C)
                 except RuntimeError as e:
@@ -211,15 +200,21 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         self.logger.info(f"[Color] Saved alpha -> {self.log_sub_folder}")
         return alpha
 
-
     def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
-        """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
         log_b = torch.log(b.clamp(1e-300))
         M     = log_K + f.unsqueeze(1) / eps
         m     = M.max(dim=0, keepdim=True).values
         lse   = (M - m).exp().sum(dim=0).log() + m.squeeze(0)
         return eps * (log_b - lse)
+
+    def _f_from_g(self, g: torch.Tensor, a: torch.Tensor,
+                  log_K: torch.Tensor, eps: float) -> torch.Tensor:
+        log_a = torch.log(a.clamp(1e-300))
+        M     = log_K + g.unsqueeze(0) / eps
+        m     = M.max(dim=1, keepdim=True).values
+        lse   = (M - m).exp().sum(dim=1).log() + m.squeeze(1)
+        return eps * (log_a - lse)
 
     def predict_plan(
         self,
@@ -228,29 +223,25 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-        """
-        Inference: f = Φ_f @ α, g = g_from_f(f) via 1 Sinkhorn step.
-        Same pipeline as Method 2 for fair inference time comparison.
-        """
         eps = float(self.cfg_m.epsilon)
         C   = self._compute_cost(x_src, x_tgt)
 
         Xf, _ = self._compute_features(a, b, x_src, x_tgt)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
-        f_transport = Xf @ self.alpha   # transport-only
+        f_transport = Xf @ self.alpha
         f_pred = f_transport + eps * np.log(np.clip(a, 1e-10, None))
 
-        # Derive g via 1 Sinkhorn step (not from β)
-        log_K  = torch.tensor(-C / eps, dtype=torch.float64, device=self.device)
+        log_Kt = torch.tensor(-C / eps, dtype=torch.float64, device=self.device)
+        a_t    = torch.tensor(a,      dtype=torch.float64, device=self.device)
         f_t    = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
         b_t    = torch.tensor(b,      dtype=torch.float64, device=self.device)
         with torch.no_grad():
-            g_t = self._g_from_f(f_t, b_t, log_K, eps)
+            g_t = self._g_from_f(f_t, b_t, log_Kt, eps)
+            f_t = self._f_from_g(g_t, a_t, log_Kt, eps)
 
-        return self._potentials_to_plan(f_pred, g_t.cpu().numpy(), C)
-        
+        return self._potentials_to_plan(f_t.cpu().numpy(), g_t.cpu().numpy(), C)
+
     def train(self, dataloader_train):
-        """Fit and save regression weights."""
         self.alpha = self._fit(dataloader_train)
         self.beta  = np.zeros(self.projection_matrix.shape[0])
         self.logger.info("[Color] Training complete.")
