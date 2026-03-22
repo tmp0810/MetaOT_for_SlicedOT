@@ -87,11 +87,11 @@ def main():
     # ── Define predict functions ──────────────────────────────────────────
     def predict_reg(a, b):
         f, g = model_reg._predict_potentials(a, b, model_reg.alpha)
-        return model_reg._potentials_to_plan(f, g)
+        return model_reg._potentials_to_plan(a, b, f, g)
 
     def predict_obj(a, b):
         f, g = model_obj._predict_potentials(a, b, model_obj.alpha)
-        return model_obj._potentials_to_plan(f, g)
+        return model_obj._potentials_to_plan(a, b, f, g)
 
     def predict_meta(a, b):
         a_t = torch.tensor(a, dtype=torch.float64, device=dev).unsqueeze(0)
