@@ -46,7 +46,10 @@ def sample_pairs(n, seed):
 
 
 def evaluate(predict_fn, test_pairs, C, eps, name):
-    """predict_fn(a, b) → P numpy array."""
+    if test_pairs:
+        try: predict_fn(*test_pairs[0])
+        except Exception: pass
+ 
     rmse_list, time_list = [], []
     for a, b in tqdm(test_pairs, desc=f"  Eval {name}", leave=False):
         P_gt = sinkhorn_gt(a, b, C, eps)
