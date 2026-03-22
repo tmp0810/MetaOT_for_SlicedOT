@@ -179,10 +179,6 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
 
         return self._potentials_to_plan(f_pred, g_t.cpu().numpy())
 
-    # ------------------------------------------------------------------
-    # Override: train — skip MNIST _evaluate, just fit
-    # ------------------------------------------------------------------
-
     def train(self, dataloader_train, dataloader_test=None):
         """Fit regression weights. No MNIST-style geodesic evaluation."""
         self.alpha, self.beta = self._fit(dataloader_train)
