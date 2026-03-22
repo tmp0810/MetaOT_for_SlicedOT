@@ -19,6 +19,7 @@ def _ridge_regression(X, y, ridge=0.0):
         H = H + ridge * np.eye(H.shape[0])
     return np.linalg.solve(H, Xty)
 
+
 class OT_Regression_Sliced(Defense_Train_Base):
     def __init__(self, cfg_proj, cfg_m):
         Defense_Train_Base.__init__(self, cfg_proj, cfg_m, name="OT_Regression_Sliced")
@@ -37,6 +38,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
             f"[OT_Regression_Sliced] projection_matrix: {self.projection_matrix.shape}, "
             f"num_bootstrap={self.cfg_m.num_bootstrap}, ridge={self.cfg_m.ridge}"
         )
+
     def _build_grid(self):
         s = self.cfg_m.img_size
         grid = []
@@ -48,6 +50,11 @@ class OT_Regression_Sliced(Defense_Train_Base):
         self.C = np.sum(diff ** 2, axis=-1)                      # (n, n)
 
     def _solve_entropic_ot(self, a: np.ndarray, b: np.ndarray):
+        """
+        Sinkhorn algorithm in log-space — Algorithm 1 from the paper.
+
+        Returns f, g directly.
+        """
         eps = self.cfg_m.epsilon
         a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
         b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
@@ -72,7 +79,7 @@ class OT_Regression_Sliced(Defense_Train_Base):
         if f.std() < 1e-8:
             raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
         return f, g
-
+        
     def _compute_features(self, a: np.ndarray, b: np.ndarray):
         device = torch.device(
             f"cuda:{self.cfg_m.gpu}"
@@ -108,12 +115,13 @@ class OT_Regression_Sliced(Defense_Train_Base):
 
         return Xf, Xg
 
+
     def _fit(self, dataloader_train):
         M = self.cfg_m.num_bootstrap
         self.logger.info(f"[Fit] Collecting M={M} pairs …")
 
-        Phi_f_list, Phi_g_list = [], []
-        y_f_list,   y_g_list   = [], []
+        Phi_f_list = []
+        y_f_list   = []
         count = 0
 
         pbar = tqdm(total=M, desc="Pairs")
@@ -123,38 +131,28 @@ class OT_Regression_Sliced(Defense_Train_Base):
                     break
 
                 f_gt, g_gt = self._solve_entropic_ot(a, b)
+
+                # ── Log-density correction ────────────────────────────────
                 eps = self.cfg_m.epsilon
                 f_gt = f_gt - eps * np.log(np.clip(a, 1e-10, None))
-                g_gt = g_gt - eps * np.log(np.clip(b, 1e-10, None))
                 f_gt = f_gt - f_gt.mean()
-                g_gt = g_gt - g_gt.mean()
 
-                Xf, Xg = self._compute_features(a, b)
+                Xf, _ = self._compute_features(a, b)
                 Xf = Xf - Xf.mean(axis=0, keepdims=True)
-                Xg = Xg - Xg.mean(axis=0, keepdims=True)
 
                 Phi_f_list.append(Xf)
-                Phi_g_list.append(Xg)
                 y_f_list.append(f_gt)
-                y_g_list.append(g_gt)
 
                 count += 1
                 pbar.update(1)
                 if count % 20 == 0:
-                    self.logger.info(
-                        f"Pair {count}/{M} | "
-                        f"||f_gt||={np.linalg.norm(f_gt):.4f}, "
-                        f"||g_gt||={np.linalg.norm(g_gt):.4f}"
-                    )
+                    self.logger.info(f"Pair {count}/{M} | ||f_gt||={np.linalg.norm(f_gt):.4f}")
             if count >= M:
                 break
         pbar.close()
 
-        # --- stack → (M*n, L) then closed-form ridge regression ---
-        Phi_f = np.vstack(Phi_f_list)     # (M*n, L)
-        Phi_g = np.vstack(Phi_g_list)     # (M*n, L)
-        y_f   = np.concatenate(y_f_list)  # (M*n,)
-        y_g   = np.concatenate(y_g_list)  # (M*n,)
+        Phi_f = np.vstack(Phi_f_list)
+        y_f   = np.concatenate(y_f_list)
 
         self.logger.info(
             f"[Fit] Phi_f: {Phi_f.shape} | "
@@ -170,36 +168,23 @@ class OT_Regression_Sliced(Defense_Train_Base):
             pbar.update(1)
             pbar.set_description(f"Ridge α done in {time.time()-t0:.2f}s")
 
-        self.logger.info(f"[Fit] Solving ridge regression for β …")
-        with tqdm(total=1, desc="Ridge β", bar_format="{desc}: {elapsed}") as pbar:
-            t0 = time.time()
-            beta  = _ridge_regression(Phi_g, y_g, ridge)
-            pbar.update(1)
-            pbar.set_description(f"Ridge β done in {time.time()-t0:.2f}s")
-
         self.logger.info(
             f"[Fit] α: min={alpha.min():.4f}, max={alpha.max():.4f}, "
             f"nnz={np.sum(np.abs(alpha) > 1e-6)}/{len(alpha)}"
         )
-        self.logger.info(
-            f"[Fit] β: min={beta.min():.4f},  max={beta.max():.4f}, "
-            f"nnz={np.sum(np.abs(beta)  > 1e-6)}/{len(beta)}"
-        )
-
-        # Persist coefficients
         np.save(os.path.join(self.log_sub_folder, "alpha.npy"), alpha)
-        np.save(os.path.join(self.log_sub_folder, "beta.npy"),  beta)
-        self.logger.info(f"[Fit] Saved alpha/beta to {self.log_sub_folder}")
-
-        return alpha, beta
+        self.logger.info(f"[Fit] Saved alpha to {self.log_sub_folder}")
+        return alpha
 
     def _precompute_log_K(self) -> torch.Tensor:
+        """log_K = -C/eps. FIXED for MNIST (same pixel grid always)."""
         eps = float(self.cfg_m.epsilon)
         C_t = torch.tensor(self.C, dtype=torch.float64, device=self.device)
         return -C_t / eps
 
     def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
+        """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
         log_b = torch.log(b.clamp(1e-300))
         M     = log_K + f.unsqueeze(1) / eps
         m     = M.max(dim=0, keepdim=True).values
@@ -211,15 +196,17 @@ class OT_Regression_Sliced(Defense_Train_Base):
         a: np.ndarray,
         b: np.ndarray,
         alpha: np.ndarray,
-        beta: np.ndarray = None,  
+        beta: np.ndarray = None,   # unused — g derived via 1 Sinkhorn step
     ):
         Xf, _ = self._compute_features(a, b)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
-        f_pred = Xf @ alpha  
+        f_pred = Xf @ alpha   # transport-only, log-density removed during fit
 
+        # Add back ε·log(a) to match raw Sinkhorn potential scale
         eps    = float(self.cfg_m.epsilon)
         f_pred = f_pred + eps * np.log(np.clip(a, 1e-10, None))
 
+        # Derive g via 1 Sinkhorn step (not from β)
         log_K = self._precompute_log_K()
         f_t   = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
         b_t   = torch.tensor(b,      dtype=torch.float64, device=self.device)
@@ -315,6 +302,8 @@ class OT_Regression_Sliced(Defense_Train_Base):
             print(msg)
             self.logger.info(msg)
 
+            # Geodesic interpolation images — call via class, not self, to avoid
+            # Python treating P as a positional arg for the first parameter
             imgs_gt   = OT_Regression_Sliced.interp(P_gt,   num_inter=11, batch_size=50_000, img_size=img_size)
             imgs_pred = OT_Regression_Sliced.interp(P_pred, num_inter=11, batch_size=50_000, img_size=img_size)
 
@@ -332,5 +321,6 @@ class OT_Regression_Sliced(Defense_Train_Base):
             )
 
     def train(self, dataloader_train, dataloader_test):
-        self.alpha, self.beta = self._fit(dataloader_train)
+        self.alpha = self._fit(dataloader_train)
+        self.beta  = np.zeros(self.projection_matrix.shape[0])
         self._evaluate(dataloader_test, self.alpha, self.beta)
