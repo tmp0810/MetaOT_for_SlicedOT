@@ -2,7 +2,6 @@ import os
 import numpy as np
 import torch
 from tqdm import tqdm
-import ot
 
 from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
 from regression_OT_utils import (
@@ -14,10 +13,13 @@ from regression_OT_utils import (
 class OT_Regression_Sliced_Color(OT_Regression_Sliced):
 
     def _build_grid(self):
+        """No fixed pixel grid — support varies per pair."""
         self.x_grid = None
         self.C      = None
 
     def __init__(self, cfg_proj, cfg_m):
+        # super().__init__ calls _build_grid (our override → no-op) and
+        # then sets self.projection_matrix with dim=2 (from pixel space).
         super().__init__(cfg_proj, cfg_m)
 
         # Override projection directions: R^3 for RGB
@@ -32,15 +34,14 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             f"dim=3 (RGB), L={L}"
         )
 
-
     def _compute_cost(
         self,
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-      
         diff = x_src[:, None, :] - x_tgt[None, :, :]   # (n_src, n_tgt, 3)
         return np.sum(diff ** 2, axis=-1)
+
 
     def _solve_entropic_ot(
         self,
@@ -48,37 +49,38 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         b: np.ndarray,
         C: np.ndarray = None,
     ):
+        """
+        Log-space Sinkhorn with explicit cost matrix.
+        Overrides parent (which uses self.C).
+        """
         if C is None:
             raise ValueError("[Color] _solve_entropic_ot requires explicit C.")
-        
-        eps = self.cfg_m.epsilon
 
-        a_safe = np.clip(a, 1e-10, None)
-        a_safe /= a_safe.sum()
-        b_safe = np.clip(b, 1e-10, None)
-        b_safe /= b_safe.sum()
- 
-        _, log_dict = ot.sinkhorn(
-            a_safe, b_safe, C, 
-            reg=eps, 
-            numItermax=self.cfg_m.sinkhorn_iters, 
-            stopThr=1e-5, 
-            log=True
-        )
-        
-        if 'alpha' in log_dict:
-            f = log_dict['alpha']
-            g = log_dict['beta']
-        elif 'log_u' in log_dict:
-            f = eps * log_dict['log_u']
-            g = eps * log_dict['log_v']
-        else:
-            u_opt = log_dict.get('u', np.ones_like(a))
-            v_opt = log_dict.get('v', np.ones_like(b))
-            f = eps * np.log(np.clip(u_opt, 1e-50, None))
-            g = eps * np.log(np.clip(v_opt, 1e-50, None))
+        eps    = self.cfg_m.epsilon
+        a_safe = np.clip(a, 1e-10, None); a_safe /= a_safe.sum()
+        b_safe = np.clip(b, 1e-10, None); b_safe /= b_safe.sum()
+        log_a  = np.log(a_safe)
+        log_b  = np.log(b_safe)
+        log_K  = -C / eps
 
+        def lse(X, axis):
+            m = X.max(axis=axis, keepdims=True)
+            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+
+        f = np.zeros_like(a_safe)
+        g = np.zeros_like(b_safe)
+        for _ in range(self.cfg_m.sinkhorn_iters):
+            g_new = eps * (log_b - lse(log_K + f[:, None] / eps, axis=0))
+            f_new = eps * (log_a - lse(log_K + g_new[None, :] / eps, axis=1))
+            if np.max(np.abs(f_new - f)) < 1e-6:
+                f, g = f_new, g_new
+                break
+            f, g = f_new, g_new
+
+        if f.std() < 1e-8:
+            raise RuntimeError(f"f_gt is constant (std={f.std():.2e}).")
         return f, g
+
 
     def _compute_features(
         self,
@@ -119,9 +121,8 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         Xg = g_grad.cpu().numpy().T    # (n_tgt, L)
         return Xf, Xg
 
-
     def _potentials_to_plan(
-        self, a: np.ndarray, b: np.ndarray,
+        self,
         f: np.ndarray,
         g: np.ndarray,
         C: np.ndarray = None,
@@ -136,20 +137,12 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         log_P = f_c[:, None] / eps - C / eps + g_c[None, :] / eps
         log_P -= log_P.max()
         P     = np.exp(log_P)
-
-        # Ép 1 bên về source a
-        r = P.sum(axis=1) + 1e-12
-        P = P * (a / r)[:, None]
-        
-        # Ép 1 bên về source b
-        c = P.sum(axis=0) + 1e-12
-        P = P * (b / c)[None, :]
-
-
         P     = np.clip(P, 0.0, None)
         P_sum = P.sum()
-      
+        if P_sum > 0:
+            P /= P_sum
         return P
+
 
     def _fit(self, dataloader_train):
         M   = self.cfg_m.num_bootstrap
@@ -166,14 +159,15 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                 if count >= M:
                     break
 
-                a     = src_w[i].numpy()     
-                x_src = src_c[i].numpy()    
-                b     = tgt_w[i].numpy()     
-                x_tgt = tgt_c[i].numpy()     
+                a     = src_w[i].numpy()      # (n_src,)
+                x_src = src_c[i].numpy()      # (n_src, 3)
+                b     = tgt_w[i].numpy()      # (n_tgt,)
+                x_tgt = tgt_c[i].numpy()      # (n_tgt, 3)
 
                 # Per-pair cost matrix (n_src, n_tgt)
                 C = self._compute_cost(x_src, x_tgt)
 
+                # Ground-truth Sinkhorn potentials
                 try:
                     f_gt, g_gt = self._solve_entropic_ot(a, b, C)
                 except RuntimeError as e:
@@ -237,26 +231,14 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         self.logger.info(f"[Color] Saved alpha/beta -> {self.log_sub_folder}")
         return alpha, beta
 
-
-    def _predict_potentials_color(
-        self,
-        a: np.ndarray,
-        b: np.ndarray,
-        x_src: np.ndarray,
-        x_tgt: np.ndarray,
-    ):
-        Xf, Xg = self._compute_features(a, b, x_src, x_tgt)
-        Xf -= Xf.mean(axis=0, keepdims=True)
-        Xg -= Xg.mean(axis=0, keepdims=True)
-
-        f_transport = Xf @ self.alpha   # (n_src,) — transport-only
-        g_transport = Xg @ self.beta    # (n_tgt,)
-
-        # Add back log-density term
-        eps    = self.cfg_m.epsilon
-        f_pred = f_transport + eps * np.log(np.clip(a, 1e-10, None))
-        g_pred = g_transport + eps * np.log(np.clip(b, 1e-10, None))
-        return f_pred, g_pred
+    def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
+                  log_K: torch.Tensor, eps: float) -> torch.Tensor:
+        """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
+        log_b = torch.log(b.clamp(1e-300))
+        M     = log_K + f.unsqueeze(1) / eps
+        m     = M.max(dim=0, keepdim=True).values
+        lse   = (M - m).exp().sum(dim=0).log() + m.squeeze(0)
+        return eps * (log_b - lse)
 
     def predict_plan(
         self,
@@ -265,10 +247,27 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-        C              = self._compute_cost(x_src, x_tgt)
-        f_pred, g_pred = self._predict_potentials_color(a, b, x_src, x_tgt)
-        return self._potentials_to_plan(a, b, f_pred, g_pred, C)
+        """
+        Inference: f = Φ_f @ α, g = g_from_f(f) via 1 Sinkhorn step.
+        Same pipeline as Method 2 for fair inference time comparison.
+        """
+        eps = float(self.cfg_m.epsilon)
+        C   = self._compute_cost(x_src, x_tgt)
 
+        Xf, _ = self._compute_features(a, b, x_src, x_tgt)
+        Xf    = Xf - Xf.mean(axis=0, keepdims=True)
+        f_transport = Xf @ self.alpha   # transport-only
+        f_pred = f_transport + eps * np.log(np.clip(a, 1e-10, None))
+
+        # Derive g via 1 Sinkhorn step (not from β)
+        log_K  = torch.tensor(-C / eps, dtype=torch.float64, device=self.device)
+        f_t    = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
+        b_t    = torch.tensor(b,      dtype=torch.float64, device=self.device)
+        with torch.no_grad():
+            g_t = self._g_from_f(f_t, b_t, log_K, eps)
+
+        return self._potentials_to_plan(f_pred, g_t.cpu().numpy(), C)
+        
     def train(self, dataloader_train):
         """Fit and save regression weights."""
         self.alpha, self.beta = self._fit(dataloader_train)
