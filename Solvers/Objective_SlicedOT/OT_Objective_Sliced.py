@@ -106,6 +106,13 @@ class OT_Objective_Sliced(Defense_Train_Base):
         lse   = (M - m).exp().sum(dim=0).log() + m.squeeze(0)
         return eps * (log_b - lse)
 
+
+    def _f_from_g(self, g, a, log_K, eps):
+        log_a = torch.log(a.clamp(1e-300))
+        M     = log_K + g.unsqueeze(0) / eps
+        m     = M.max(dim=1, keepdim=True).values
+        lse   = (M - m).exp().sum(dim=1).log() + m.squeeze(1)
+        return eps * (log_a - lse)
     def _dual_obj_from_f(self, a, b, f, log_K, eps):
         g    = self._g_from_f(f, b, log_K, eps)
         M_fa = log_K + g.unsqueeze(0) / eps
@@ -204,9 +211,11 @@ class OT_Objective_Sliced(Defense_Train_Base):
         log_K    = self._precompute_log_K()
         f_t      = torch.tensor(f_clean, dtype=torch.float64, device=self.device)
         b_t      = torch.tensor(b,       dtype=torch.float64, device=self.device)
+        a_t   = torch.tensor(a,       dtype=torch.float64, device=self.device)
         with torch.no_grad():
             g_t = self._g_from_f(f_t, b_t, log_K, eps)
-        return f_clean, g_t.cpu().numpy()
+            f_t = self._f_from_g(g_t, a_t, log_K, eps)
+        return f_t.cpu().numpy(), g_t.cpu().numpy()
 
     def train(self, dataloader_train, dataloader_test):
         self.alpha = self._fit(dataloader_train)
