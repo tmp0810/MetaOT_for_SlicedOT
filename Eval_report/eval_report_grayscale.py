@@ -46,10 +46,13 @@ def sample_pairs(n, seed):
 
 
 def evaluate(predict_fn, test_pairs, C, eps, name):
+    """predict_fn(a, b) → P numpy array."""
+    # Warmup: 1 dummy call to trigger CUDA JIT / memory allocation
+    # so cold-start outlier doesn't skew inference timing stats
     if test_pairs:
         try: predict_fn(*test_pairs[0])
         except Exception: pass
- 
+
     rmse_list, time_list = [], []
     for a, b in tqdm(test_pairs, desc=f"  Eval {name}", leave=False):
         P_gt = sinkhorn_gt(a, b, C, eps)
@@ -68,6 +71,7 @@ def save_model(model, path):
 
 
 def pairs_to_loader(pairs, batch_size=1):
+    """Wrap a list of (a,b) pairs into a DataLoader-like iterable."""
     # yields (_, _, a_batch, b_batch) to match existing _fit() interface
     import torch
     data = [(torch.zeros(1), torch.zeros(1),
@@ -107,6 +111,7 @@ def make_cfg_proj(solver, seed, gpu, flag_time):
                               data_name="MNIST", gpu=gpu)
 
 
+# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args = parse_args()
@@ -148,8 +153,9 @@ def main():
     t_reg = time.perf_counter() - t0
 
     def predict_reg(a, b):
-        f, g = model_reg._predict_potentials(a, b, model_reg.alpha, model_reg.beta)
-        return model_reg._potentials_to_plan(a, b, f, g)
+        # beta unused — g derived via 1 Sinkhorn step in _predict_potentials
+        f, g = model_reg._predict_potentials(a, b, model_reg.alpha)
+        return model_reg._potentials_to_plan(f, g)
 
     save_model(model_reg, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
     rmse_r, tinf_r = evaluate(predict_reg, test_pairs, C, eps, "OT_Regression")
@@ -172,7 +178,7 @@ def main():
 
     def predict_obj(a, b):
         f, g = model_obj._predict_potentials(a, b, model_obj.alpha)
-        return model_obj._potentials_to_plan(a, b, f, g)
+        return model_obj._potentials_to_plan(f, g)
 
     save_model(model_obj, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
     rmse_o, tinf_o = evaluate(predict_obj, test_pairs, C, eps, "OT_Objective")
