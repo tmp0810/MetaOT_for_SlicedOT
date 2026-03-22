@@ -179,12 +179,13 @@ def main():
 
     def predict_obj(a, b):
         f, g = model_obj._predict_potentials(a, b, model_obj.alpha)
-        return model_obj._potentials_to_plan(f, g)
+        return model_obj._potentials_to_plan(a, b, f, g)
 
     save_model(model_obj, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
     rmse_o, tinf_o = evaluate(predict_obj, test_pairs, C, eps, "OT_Objective")
     results.append(("OT Objective (M2)", rmse_o, tinf_o, t_obj))
     print(f"  Train: {t_obj:.1f}s  RMSE: {rmse_o.mean():.2e}  Infer: {tinf_o.mean()*1000:.2f}ms")
+
 
     # ── 3. Meta OT (OT_Discrete) ──────────────────────────────────────────
     print("\n[3/4] Meta OT GrayScale (baseline) ...")
