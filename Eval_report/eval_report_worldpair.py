@@ -34,6 +34,10 @@ def sample_pair(n_supply, n_demand, seed):
 
 
 def evaluate(predict_fn, test_pairs, C, eps, name):
+    if test_pairs:
+        try: predict_fn(*test_pairs[0])
+        except Exception: pass
+ 
     rmse_list, time_list = [], []
     for a, b in tqdm(test_pairs, desc=f"  Eval {name}", leave=False):
         P_gt = sinkhorn_gt(a, b, C, eps)
@@ -42,7 +46,6 @@ def evaluate(predict_fn, test_pairs, C, eps, name):
         time_list.append(time.perf_counter() - t0)
         rmse_list.append(float(np.sqrt(np.mean((P - P_gt)**2))))
     return np.array(rmse_list), np.array(time_list)
-
 
 def save_model(model, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
