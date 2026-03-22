@@ -156,7 +156,7 @@ def main():
     def predict_reg(a, b):
         # beta unused — g derived via 1 Sinkhorn step in _predict_potentials
         f, g = model_reg._predict_potentials(a, b, model_reg.alpha)
-        return model_reg._potentials_to_plan(f, g)
+        return model_reg._potentials_to_plan(a, b, f, g)
 
     save_model(model_reg, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
     rmse_r, tinf_r = evaluate(predict_reg, test_pairs, C, eps, "OT_Regression")
