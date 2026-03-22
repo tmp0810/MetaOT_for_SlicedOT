@@ -14,12 +14,14 @@ class OT_Objective_Sliced_Color(OT_Regression_Sliced_Color):
     def __init__(self, cfg_proj, cfg_m):
         super().__init__(cfg_proj, cfg_m)
         self.name = "OT_Objective_Sliced_Color"
+        self.logger.info("[OT_Objective_Sliced_Color] Method 2: Objective-based Sliced OT")
 
     def _g_from_f(self,
                   f:     torch.Tensor,   # (n,)
                   b:     torch.Tensor,   # (n,)
                   log_K: torch.Tensor,   # (n, n)
                   eps:   float) -> torch.Tensor:
+        """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
         log_b = torch.log(b.clamp(1e-300))
         M     = log_K + f.unsqueeze(1) / eps           # (n, n)
         m     = M.max(dim=0, keepdim=True).values
@@ -159,7 +161,6 @@ class OT_Objective_Sliced_Color(OT_Regression_Sliced_Color):
         np.save(os.path.join(self.log_sub_folder, "alpha.npy"), alpha_np)
         return alpha_np
 
-
     def predict_plan(self,
                      a:     np.ndarray,   # (n,)
                      b:     np.ndarray,   # (n,)
@@ -168,13 +169,16 @@ class OT_Objective_Sliced_Color(OT_Regression_Sliced_Color):
                      ) -> np.ndarray:
         eps = float(self.cfg_m.epsilon)
 
+        # Features
         Xf, _ = self._compute_features(a, b, src_c, tgt_c)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
         f_pred = Xf @ self.alpha   # (n,)
 
+        # Per-pair log_K
         C     = self._compute_cost(src_c, tgt_c)
         log_K = -C / eps
 
+        # g from f (Option A)
         f_t   = torch.tensor(f_pred, dtype=torch.float64, device=self.device)
         b_t   = torch.tensor(b,      dtype=torch.float64, device=self.device)
         log_Kt = torch.tensor(log_K, dtype=torch.float64, device=self.device)
@@ -184,10 +188,10 @@ class OT_Objective_Sliced_Color(OT_Regression_Sliced_Color):
                                   float(self.cfg_m.epsilon))
 
         g_pred = g_t.cpu().numpy()
-        return self._potentials_to_plan(a, b, f_pred, g_pred, C)
-
+        return self._potentials_to_plan(f_pred, g_pred, C)
 
     def train(self, dataloader_train):
+        """Fit α via objective. No GT Sinkhorn needed."""
         self.alpha = self._fit(dataloader_train)
         self.logger.info("[OT_Objective_Sliced_Color] Training complete.")
         return self.alpha
