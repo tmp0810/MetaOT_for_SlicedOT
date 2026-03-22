@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from Solvers.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
+from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced, _ridge_regression
 from regression_OT_utils import (
     generate_uniform_unit_sphere_projections,
     emd1D_dual,
@@ -38,7 +38,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray,
         x_tgt: np.ndarray,
     ) -> np.ndarray:
-       n_src, n_tgt)
         diff = x_src[:, None, :] - x_tgt[None, :, :]   # (n_src, n_tgt, 3)
         return np.sum(diff ** 2, axis=-1)
 
@@ -83,7 +82,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         x_src: np.ndarray = None,
         x_tgt: np.ndarray = None,
     ):
-    
         if x_src is None or x_tgt is None:
             raise ValueError("[Color] _compute_features requires x_src and x_tgt.")
 
@@ -122,6 +120,10 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         g: np.ndarray,
         C: np.ndarray = None,
     ) -> np.ndarray:
+        """
+        P_ij ∝ exp((f_i + g_j - C_ij) / ε).
+        Overrides parent to accept explicit C.
+        """
         if C is None:
             raise ValueError("[Color] _potentials_to_plan requires explicit C.")
 
@@ -168,10 +170,6 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
                     self.logger.warning(f"Skipping pair {count}: {e}")
                     continue
 
-                # ── Log-density correction ─────────────────────────────
-                # f_gt ≈ ε·log(a) + transport_geometry.
-                # Remove ε·log(a) to improve regression signal/noise.
-                # At predict time we add it back (_predict_potentials_color).
                 f_clean = f_gt - eps * np.log(np.clip(a, 1e-10, None))
                 f_clean -= f_clean.mean()
 
@@ -213,6 +211,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
         self.logger.info(f"[Color] Saved alpha -> {self.log_sub_folder}")
         return alpha
 
+
     def _g_from_f(self, f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
         """One Sinkhorn step: g[j] = ε·log(b[j]) - ε·lse_i(log_K[i,j] + f[i]/ε)"""
@@ -249,7 +248,7 @@ class OT_Regression_Sliced_Color(OT_Regression_Sliced):
             g_t = self._g_from_f(f_t, b_t, log_K, eps)
 
         return self._potentials_to_plan(f_pred, g_t.cpu().numpy(), C)
-
+        
     def train(self, dataloader_train):
         """Fit and save regression weights."""
         self.alpha = self._fit(dataloader_train)
