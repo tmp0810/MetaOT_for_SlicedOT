@@ -149,7 +149,8 @@ def main():
         make_cfg_proj("OT_Regression_Sliced", TRAIN_SEED, args.gpu, flag_time), cfg_r)
 
     t0 = time.perf_counter()
-    model_reg.alpha, model_reg.beta = model_reg._fit(dl_train)
+    model_reg.alpha = model_reg._fit(dl_train)
+    model_reg.beta  = np.zeros(cfg_r['num_projections'])
     t_reg = time.perf_counter() - t0
 
     def predict_reg(a, b):
