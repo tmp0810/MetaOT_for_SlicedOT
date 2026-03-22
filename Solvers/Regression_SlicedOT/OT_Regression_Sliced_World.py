@@ -152,6 +152,27 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
         lse   = (M - m).exp().sum(dim=1).log() + m.squeeze(1)
         return eps * (log_a - lse)
 
+    def _potentials_to_plan(self, a: np.ndarray, b: np.ndarray,
+                            f: np.ndarray, g: np.ndarray) -> np.ndarray:
+        eps   = float(self.cfg_m.epsilon)
+        log_P = f[:, None] / eps - self.C / eps + g[None, :] / eps
+
+        def lse(X, axis):
+            m = X.max(axis=axis, keepdims=True)
+            return np.log(np.exp(X - m).sum(axis=axis)) + m.squeeze(axis=axis)
+
+        log_a = np.log(np.clip(a, 1e-300, None))
+        log_u = log_a[:, None] - lse(log_P, axis=1)[:, None]
+        log_P = log_P + log_u
+        log_b = np.log(np.clip(b, 1e-300, None))
+        log_v = log_b[None, :] - lse(log_P, axis=0)[None, :]
+        log_P = log_P + log_v
+        P = np.clip(np.exp(log_P), 0.0, None)
+        s = P.sum()
+        if s > 0:
+            P /= s
+        return P
+
     def predict_plan(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
         Xf, _ = self._compute_features(a, b)
         Xf    = Xf - Xf.mean(axis=0, keepdims=True)
@@ -166,9 +187,10 @@ class OT_Regression_Sliced_World(OT_Regression_Sliced):
             g_t = self._g_from_f(f_t, b_t, log_K, eps)
             f_t = self._f_from_g(g_t, a_t, log_K, eps)
 
-        return self._potentials_to_plan(f_t.cpu().numpy(), g_t.cpu().numpy())
+        return self._potentials_to_plan(a, b, f_t.cpu().numpy(), g_t.cpu().numpy())
 
     def train(self, dataloader_train, dataloader_test=None):
-        self.alpha, self.beta = self._fit(dataloader_train)
+        self.alpha = self._fit(dataloader_train)
+        self.beta  = np.zeros(self.projection_matrix.shape[0])
         self.logger.info("[World] Training complete. Call predict_plan(a, b) to use.")
         return self.alpha, self.beta
