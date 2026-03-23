@@ -16,7 +16,7 @@ from cfg import init_cfg
 from Data.color_transfer_data import get_color_transfer_dataloader
 
 POOL_SEED   = 0
-POOL_SIZE   = 500
+POOL_SIZE   = 5000
 TRAIN_RATIO = 0.7   # 490 train / 210 test
 EPS         = 0.005  # RGB space [0,1]^3: small distances → need small eps for sharp plans
 
