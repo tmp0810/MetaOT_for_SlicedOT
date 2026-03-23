@@ -13,7 +13,7 @@ from cfg import init_cfg
 from Data.dataset_class import MNIST
 
 POOL_SEED  = 0
-POOL_SIZE  = 5000
+POOL_SIZE  = 500
 TRAIN_RATIO = 0.7   # 490 train / 210 test
 
 
