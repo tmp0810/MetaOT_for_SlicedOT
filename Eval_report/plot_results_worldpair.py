@@ -40,17 +40,45 @@ def plot_transport(a, b, P, supply_euc, demand_euc, supply_sph,
                s=6, color="k", zorder=10, label="supply")
 
     n_demand = len(b)
-    max_arcs = min(n_demand, 2000)
-    rng_plot = np.random.default_rng(42)
-    arc_idxs = rng_plot.choice(n_demand, size=max_arcs, replace=False)
+    # max_arcs = min(n_demand, 2000)
+    # rng_plot = np.random.default_rng(42)
+    # arc_idxs = rng_plot.choice(n_demand, size=max_arcs, replace=False)
 
-    for j in arc_idxs:
-        arc_euc = great_circle_path(demand_euc[j], demand_to_supply_euc[j], n_pts=100)
+    # for j in arc_idxs:
+    #     arc_euc = great_circle_path(demand_euc[j], demand_to_supply_euc[j], n_pts=100)
+    #     arc_sph = euclidean_to_spherical(arc_euc)
+    #     diff    = np.abs(np.diff(arc_sph[:, 0]))
+    #     arc_sph[1:][diff > 0.1] = np.nan
+    #     ax.plot(arc_sph[:, 0], arc_sph[:, 1],
+    #             color=colors[0], alpha=0.06, linewidth=0.8)
+
+    # ax.set_title(title, fontsize=10)
+    # ax.set_xticks([]); ax.set_yticks([])
+    # ax.grid(False)
+    # for spine in ax.spines.values():
+    #     spine.set_visible(False)
+
+    # fig.tight_layout()
+    # fig.savefig(out_path, transparent=True, bbox_inches="tight")
+    # plt.close(fig)
+    # print(f"  Saved → {out_path}")
+
+    for j in range(n_demand):
+        # 1. Tăng n_pts lên 1000 để đường cong vút mượt mà như bài gốc
+        arc_euc = great_circle_path(demand_euc[j], demand_to_supply_euc[j], n_pts=1000)
         arc_sph = euclidean_to_spherical(arc_euc)
-        diff    = np.abs(np.diff(arc_sph[:, 0]))
-        arc_sph[1:][diff > 0.1] = np.nan
-        ax.plot(arc_sph[:, 0], arc_sph[:, 1],
-                color=colors[0], alpha=0.06, linewidth=0.8)
+        
+        # 2. Xóa nét vắt ngang Dateline (bản gốc dùng np.linalg.norm)
+        n = np.linalg.norm(arc_sph[:-1] - arc_sph[1:], axis=1)
+        arc_sph[1:][n > 0.1] = np.nan
+
+        # 3. Tăng alpha=0.1 và linewidth=1 y hệt bài gốc
+        ax.plot(
+            arc_sph[:, 0], arc_sph[:, 1],
+            color=colors[0],  # Màu xanh dương bmh default
+            alpha=0.1, 
+            linewidth=1,
+        )
 
     ax.set_title(title, fontsize=10)
     ax.set_xticks([]); ax.set_yticks([])
@@ -59,9 +87,9 @@ def plot_transport(a, b, P, supply_euc, demand_euc, supply_sph,
         spine.set_visible(False)
 
     fig.tight_layout()
-    fig.savefig(out_path, transparent=True, bbox_inches="tight")
+    fig.savefig(out_path, transparent=True, bbox_inches='tight')
     plt.close(fig)
-    print(f"  Saved → {out_path}")
+    print(f"  Saved -> {out_path}")
 
 
 def load_landmask(pop_tiff):
