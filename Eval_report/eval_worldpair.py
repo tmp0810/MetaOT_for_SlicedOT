@@ -14,7 +14,7 @@ from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import (
     OT_Regression_Sliced_World, _sphere_cost)
 
 POOL_SEED   = 0
-POOL_SIZE   = 5000
+POOL_SIZE   = 1000
 TRAIN_RATIO = 0.7   # 490 train / 210 test
 
 
