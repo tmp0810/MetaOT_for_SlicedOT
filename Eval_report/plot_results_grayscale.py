@@ -77,12 +77,18 @@ def main():
     model_meta = load_pkl(os.path.join(args.result_dir, "meta_ot.pkl"))
     model_swgg = load_pkl(os.path.join(args.result_dir, "swgg.pkl"))
 
-    # Rebuild Meta OT inference fn (MLP stored separately in log dir)
-    mlp = PotentialMLP(dim_in=img_size**2*2, dim_out=img_size**2,
-                       hidden_num=model_meta.cfg_m.MLP_hidden_num).to(dev)
-    mlp, _, _, _ = model_meta.load_ckp(mlp, None, None, "OT_D-train")
+    # # Rebuild Meta OT inference fn (MLP stored separately in log dir)
+    # mlp = PotentialMLP(dim_in=img_size**2*2, dim_out=img_size**2,
+    #                    hidden_num=model_meta.cfg_m.MLP_hidden_num).to(dev)
+    # mlp, _, _, _ = model_meta.load_ckp(mlp, None, None, "OT_D-train")
+    # mlp.eval()
+    # lf = dual_obj_loss(img_size=img_size, epsilon=model_meta.cfg_m.epsilon, device=dev)
+
+    # Đoạn mới: Lấy thẳng MLP đã được lưu kèm trong file pickle
+    mlp = model_meta._eval_mlp
     mlp.eval()
-    lf = dual_obj_loss(img_size=img_size, epsilon=model_meta.cfg_m.epsilon, device=dev)
+    lf_meta = model_meta._eval_lf
+    dev = next(mlp.parameters()).device # Lấy device hiện tại của model
 
     # ── Define predict functions ──────────────────────────────────────────
     def predict_reg(a, b):
@@ -98,7 +104,7 @@ def main():
         b_t = torch.tensor(b, dtype=torch.float64, device=dev).unsqueeze(0)
         with torch.no_grad():
             f = mlp(a_t, b_t)
-        return lf.pred_transport(a_t, b_t, f)[0]
+        return lf_meta.pred_transport(a_t, b_t, f)[0]
 
     methods = [
         ("OT_Regression", predict_reg),
