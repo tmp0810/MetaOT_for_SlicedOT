@@ -107,7 +107,7 @@ def main():
             f = mlp(a_t, b_t)
         return lf_meta.pred_transport(a_t, b_t, f)[0]
 
-        methods = [
+    methods = [
         ("OT_Regression", predict_reg),
         ("OT_Objective",  predict_obj),
         ("Meta_OT",       predict_meta),
