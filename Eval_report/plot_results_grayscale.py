@@ -76,6 +76,7 @@ def main():
     model_obj  = load_pkl(os.path.join(args.result_dir, "objective.pkl"))
     model_meta = load_pkl(os.path.join(args.result_dir, "meta_ot.pkl"))
     model_swgg = load_pkl(os.path.join(args.result_dir, "swgg.pkl"))
+    model_stp  = load_pkl(os.path.join(args.result_dir, "min_stp.pkl"))
 
     # # Rebuild Meta OT inference fn (MLP stored separately in log dir)
     # mlp = PotentialMLP(dim_in=img_size**2*2, dim_out=img_size**2,
@@ -106,11 +107,12 @@ def main():
             f = mlp(a_t, b_t)
         return lf_meta.pred_transport(a_t, b_t, f)[0]
 
-    methods = [
+        methods = [
         ("OT_Regression", predict_reg),
         ("OT_Objective",  predict_obj),
         ("Meta_OT",       predict_meta),
         ("min_SWGG",      model_swgg.predict_plan),
+        ("Min_STP",       model_stp.predict_plan),
     ]
 
     # ── Plot ──────────────────────────────────────────────────────────────
