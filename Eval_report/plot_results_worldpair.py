@@ -141,12 +141,14 @@ def main():
     model_obj  = load_pkl("objective.pkl")
     model_meta = load_pkl("meta_ot.pkl")
     model_swgg = load_pkl("swgg.pkl")
+    model_stp  = load_pkl("min_stp.pkl")
 
     methods = [
         ("OT_Regression", model_reg.predict_plan),
         ("OT_Objective",  model_obj.predict_plan),
         ("Meta_OT",       model_meta.predict_plan),
         ("min_SWGG",      model_swgg.predict_plan),
+        ("Min_STP",       model_stp.predict_plan),
     ]
 
     # ── Load landmask + cost ──────────────────────────────────────────────
