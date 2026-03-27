@@ -105,6 +105,7 @@ def main():
     model_obj  = load_pkl("objective.pkl")
     model_meta = load_pkl("meta_ot.pkl")
     model_swgg = load_pkl("swgg.pkl")
+    model_stp  = load_pkl("min_stp.pkl")
     eps        = float(model_reg.cfg_m.epsilon)   # read from model, not hardcoded
 
     print(f"eps = {eps}")
@@ -114,6 +115,7 @@ def main():
         ("OT_Objective",  model_obj.predict_plan),
         ("Meta_OT",       model_meta.predict_plan),
         ("min_SWGG",      model_swgg.predict_plan),
+        ("Min-STP",       model_stp.predict_plan),
     ]
 
     # test_pairs format: (src_w, src_c, src_labels, src_img, tgt_w, tgt_c, tgt_img, src_path, tgt_path)
