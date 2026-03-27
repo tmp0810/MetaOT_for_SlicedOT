@@ -84,24 +84,15 @@ class _SoftTopK(torch.autograd.Function):
 def _soft_permutation(r: torch.Tensor, alpha: torch.Tensor,
                       descending: bool = False) -> torch.Tensor:
     n    = r.shape[0]
-    r_   = r.unsqueeze(0)                          # (1, n)
-    k    = torch.arange(1, n, device=r.device,
-                         dtype=r.dtype)             # (n-1,)
-    br   = r_.repeat(len(k), 1)                    # (n-1, n)
-    sk   = _SoftTopK.apply(br, k, alpha, descending)  # (n-1, n)
+    r_   = r.unsqueeze(0)
+    k    = torch.arange(1, n, device=r.device, dtype=r.dtype)
+    br   = r_.repeat(len(k), 1)
+    sk   = _SoftTopK.apply(br, k, alpha, descending)
     zeros = torch.zeros(1, n, dtype=r.dtype, device=r.device)
     ones  = torch.ones(1,  n, dtype=r.dtype, device=r.device)
-    result = torch.cat([zeros, sk, ones], dim=0)   # (n+1, n)
-    Pl = result[1:] - result[:-1]                  # (n, n)
+    result = torch.cat([zeros, sk, ones], dim=0)
+    Pl = result[1:] - result[:-1]
     return Pl
-
-
-def _hard_sort_matrix(scores: torch.Tensor) -> torch.Tensor:
-    n   = len(scores)
-    idx = torch.argsort(scores)
-    P   = torch.zeros(n, n, dtype=scores.dtype, device=scores.device)
-    P[torch.arange(n, device=scores.device), idx] = 1.0
-    return P
 
 
 class SlicerNet(nn.Module):
@@ -124,10 +115,10 @@ class SlicerNet(nn.Module):
 
     def forward(self, a: torch.Tensor, b: torch.Tensor,
                 x_grid: torch.Tensor) -> torch.Tensor:
-        c     = self.context_enc(torch.cat([a, b]))          # (context_dim,)
-        c_exp = c.unsqueeze(0).expand(x_grid.size(0), -1)    # (n, context_dim)
-        inp   = torch.cat([x_grid, c_exp], dim=-1)           # (n, coord_dim+context_dim)
-        return self.point_mlp(inp).squeeze(-1)                # (n,)
+        c     = self.context_enc(torch.cat([a, b]))
+        c_exp = c.unsqueeze(0).expand(x_grid.size(0), -1)
+        inp   = torch.cat([x_grid, c_exp], dim=-1)
+        return self.point_mlp(inp).squeeze(-1)
 
 
 class Min_STP_GrayScale(Defense_Train_Base):
@@ -137,36 +128,32 @@ class Min_STP_GrayScale(Defense_Train_Base):
         self._build_slicer()
 
     def _build_grid(self):
-        s = int(self.cfg_m.img_size)                          # 28
+        s = int(self.cfg_m.img_size)
         grid = [[j, i]
                 for i in np.linspace(1, 0, num=s)
                 for j in np.linspace(0, 1, num=s)]
-        self.x_grid_np = np.array(grid, dtype=np.float64)    # (784, 2)
+        self.x_grid_np = np.array(grid, dtype=np.float64)
         self.x_grid    = torch.tensor(
             self.x_grid_np, dtype=torch.float64).to(self.device)
-
-        diff    = self.x_grid_np[:, None, :] - self.x_grid_np[None, :, :]
-        self.C_np = np.sum(diff ** 2, axis=-1)                # (784, 784)
+        diff      = self.x_grid_np[:, None, :] - self.x_grid_np[None, :, :]
+        self.C_np = np.sum(diff ** 2, axis=-1)
         self.C_t  = torch.tensor(
             self.C_np, dtype=torch.float64).to(self.device)
-
         self.logger.info(
             f"[Min_STP_GrayScale] grid={s}x{s}  "
             f"n_pixels={s**2}  C=[{self.C_np.min():.4f},{self.C_np.max():.4f}]")
 
     def _build_slicer(self):
         cfg         = self.cfg_m
-        n_pixels    = int(self.cfg_m.img_size) ** 2         # 784
+        n_pixels    = int(self.cfg_m.img_size) ** 2
         context_dim = int(cfg.get("context_dim") or 32)
         hidden_dim  = int(cfg.get("hidden_dim")  or 128)
-
         self.slicer = SlicerNet(
             n_pixels    = n_pixels,
             coord_dim   = 2,
             context_dim = context_dim,
             hidden_dim  = hidden_dim,
         ).to(self.device)
-
         n_params = sum(p.numel() for p in self.slicer.parameters())
         self.logger.info(
             f"[Min_STP_GrayScale] SlicerNet params={n_params:,}  "
@@ -176,17 +163,17 @@ class Min_STP_GrayScale(Defense_Train_Base):
         cfg    = self.cfg_m
         T      = int(cfg.get("num_train_iter") or 5000)
         lr     = float(cfg.get("learning_rate") or 1e-3)
-        alpha  = float(cfg.get("alpha")         or 0.05)   # soft_perm temperature
+        alpha  = float(cfg.get("alpha")         or 0.05)
         log_iv = int(cfg.get("log_interval")    or 100)
         max_gn = float(cfg.get("max_grad_norm") or 1.0)
 
-        # Collect all training pairs into memory
         pool_a, pool_b = [], []
         for _, _, a_batch, b_batch in dataloader_train:
             for a, b in zip(a_batch, b_batch):
                 pool_a.append(a.to(self.device, dtype=torch.float64))
                 pool_b.append(b.to(self.device, dtype=torch.float64))
         M = len(pool_a)
+        n = pool_a[0].shape[0]
         self.logger.info(
             f"[Min_STP_GrayScale] Training  T={T}  M={M}  lr={lr}  alpha={alpha}")
 
@@ -199,23 +186,39 @@ class Min_STP_GrayScale(Defense_Train_Base):
         rng      = np.random.default_rng(42)
         t0       = time.time()
         pbar     = tqdm(total=T, desc="Min_STP_GrayScale")
+        device   = self.device
 
         for step in range(T):
-            idx   = int(rng.integers(0, M))
-            a     = pool_a[idx]           # (784,) float64
-            b     = pool_b[idx]           # (784,) float64
+            idx = int(rng.integers(0, M))
+            a   = pool_a[idx]
+            b   = pool_b[idx]
 
             self.slicer.train()
-            scores = self.slicer(a, b, self.x_grid)   # (784,) float64
-
-            P_soft = _soft_permutation(scores, alpha_t)    # (784, 784) [rank, elem]
-            P_hard = _hard_sort_matrix(scores)             # (784, 784) [rank, elem]
-
-            P1 = P_soft.T @ P_hard                         # (784, 784) [elemX, elemY]
-            P2 = P_hard.T @ P_soft                         # symmetric counterpart
-            pi = (P1 + P2) * 0.5
-
-            loss = (pi * self.C_t).sum()
+            scores = self.slicer(a, b, self.x_grid)   # (n,) differentiable
+            with torch.no_grad():
+                u      = torch.argsort(scores)
+                a_u    = a[u]
+                b_u    = b[u]
+                rA     = torch.cumsum(a_u, dim=0)
+                rB     = torch.cumsum(b_u, dim=0)
+                rA_pad = torch.cat([torch.zeros(1, device=device, dtype=torch.float64), rA])
+                rB_pad = torch.cat([torch.zeros(1, device=device, dtype=torch.float64), rB])
+                r_all, _ = torch.sort(torch.cat([rA, rB]))
+                r_all    = r_all[:-1]
+                r_full   = torch.cat([torch.zeros(1, device=device, dtype=torch.float64),
+                                      r_all,
+                                      torch.ones(1, device=device, dtype=torch.float64)])
+                delta_r  = (r_full[1:] - r_full[:-1])[:-1]
+                wA = (torch.searchsorted(rA_pad.contiguous(), r_all.contiguous(), right=True) - 1).clamp(0, n - 1)
+                wB = (torch.searchsorted(rB_pad.contiguous(), r_all.contiguous(), right=True) - 1).clamp(0, n - 1)
+                mask    = delta_r > 1e-15
+                wA      = wA[mask]
+                wB      = wB[mask]
+                delta_r = delta_r[mask]
+                
+            P_soft = _soft_permutation(scores, alpha_t)  # (n, n), differentiable
+            PCP    = P_soft @ self.C_t @ P_soft.T        # (n, n)
+            loss   = (delta_r * PCP[wA, wB]).sum()
 
             opt.zero_grad()
             loss.backward()
@@ -234,7 +237,6 @@ class Min_STP_GrayScale(Defense_Train_Base):
                 self.logger.info(msg)
 
         pbar.close()
-
         ckpt = os.path.join(self.log_sub_folder, "slicer.pt")
         torch.save(self.slicer.state_dict(), ckpt)
         self.logger.info(f"[Min_STP_GrayScale] Saved → {ckpt}")
@@ -246,18 +248,18 @@ class Min_STP_GrayScale(Defense_Train_Base):
 
         self.slicer.eval()
         with torch.no_grad():
-            scores = self.slicer(a_t, b_t, self.x_grid)   # (n,)
+            scores = self.slicer(a_t, b_t, self.x_grid)
 
         n = len(a)
-        u = torch.argsort(scores)   
-        v = torch.argsort(scores)  
-        rA     = torch.cumsum(a_t[u], dim=0)   # (n,)
-        rB     = torch.cumsum(b_t[v], dim=0)   # (n,)
-        rA_pad = torch.cat([torch.zeros(1, device=device), rA])  # (n+1,)
-        rB_pad = torch.cat([torch.zeros(1, device=device), rB])  # (n+1,)
+        u = torch.argsort(scores)
+        v = torch.argsort(scores)
+        rA     = torch.cumsum(a_t[u], dim=0)
+        rB     = torch.cumsum(b_t[v], dim=0)
+        rA_pad = torch.cat([torch.zeros(1, device=device), rA])
+        rB_pad = torch.cat([torch.zeros(1, device=device), rB])
 
         r_all, _ = torch.sort(torch.cat([rA, rB]))
-        r_all    = r_all[:-1]                  # remove trailing 1.0
+        r_all    = r_all[:-1]
 
         wA = (torch.searchsorted(
             rA_pad.contiguous(), r_all.contiguous(), side='right') - 1
@@ -268,17 +270,16 @@ class Min_STP_GrayScale(Defense_Train_Base):
         r_full  = torch.cat([torch.zeros(1, device=device),
                              r_all,
                              torch.ones(1, device=device)])
-        delta_r = (r_full[1:] - r_full[:-1])[:-1]  # (len(r_all),)
+        delta_r = (r_full[1:] - r_full[:-1])[:-1]
 
         mask    = delta_r > 1e-15
         wA      = wA[mask]
         wB      = wB[mask]
         delta_r = delta_r[mask]
 
-        orig_A = u[wA]   # source pixel indices
-        orig_B = v[wB]   # target pixel indices
+        orig_A = u[wA]
+        orig_B = v[wB]
 
-        # Accumulate into plan matrix
         P = torch.zeros(n, n, dtype=torch.float64, device=device)
         P.index_put_((orig_A, orig_B), delta_r, accumulate=True)
 
