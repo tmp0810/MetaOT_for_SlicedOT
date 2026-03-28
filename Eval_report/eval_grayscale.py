@@ -155,107 +155,107 @@ def main():
     dl_train = pairs_to_loader(train_pairs, batch_size=1)
     results  = []
 
-    # ── 1. OT Regression Sliced ───────────────────────────────────────────
-    print("[1/4] OT Regression Sliced (Method 1) ...")
-    from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced
+    # # ── 1. OT Regression Sliced ───────────────────────────────────────────
+    # print("[1/4] OT Regression Sliced (Method 1) ...")
+    # from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced
 
-    cfg_r = init_cfg("OT_Regression_Sliced")
-    cfg_r["num_bootstrap"] = args.M; cfg_r["epsilon"] = eps
-    model_reg = OT_Regression_Sliced(
-        make_cfg_proj("OT_Regression_Sliced", POOL_SEED, args.gpu, flag_time), cfg_r)
+    # cfg_r = init_cfg("OT_Regression_Sliced")
+    # cfg_r["num_bootstrap"] = args.M; cfg_r["epsilon"] = eps
+    # model_reg = OT_Regression_Sliced(
+    #     make_cfg_proj("OT_Regression_Sliced", POOL_SEED, args.gpu, flag_time), cfg_r)
 
-    t0 = time.perf_counter()
-    model_reg.alpha = model_reg._fit(dl_train)
-    model_reg.beta  = np.zeros(cfg_r['num_projections'])
-    t_reg = time.perf_counter() - t0
+    # t0 = time.perf_counter()
+    # model_reg.alpha = model_reg._fit(dl_train)
+    # model_reg.beta  = np.zeros(cfg_r['num_projections'])
+    # t_reg = time.perf_counter() - t0
 
-    def predict_reg(a, b):
-        # beta unused — g derived via 1 Sinkhorn step in _predict_potentials
-        f, g = model_reg._predict_potentials(a, b, model_reg.alpha)
-        return model_reg._potentials_to_plan(a, b, f, g)
+    # def predict_reg(a, b):
+    #     # beta unused — g derived via 1 Sinkhorn step in _predict_potentials
+    #     f, g = model_reg._predict_potentials(a, b, model_reg.alpha)
+    #     return model_reg._potentials_to_plan(a, b, f, g)
 
-    save_model(model_reg, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
-    rmse_r, tinf_r = evaluate(predict_reg, test_pairs, C, eps, "OT_Regression")
-    results.append(("OT Regression (M1)", rmse_r, tinf_r, t_reg))
-    print(f"  Train: {t_reg:.1f}s  RMSE: {rmse_r.mean():.2e}  Infer: {tinf_r.mean()*1000:.2f}ms")
+    # save_model(model_reg, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
+    # rmse_r, tinf_r = evaluate(predict_reg, test_pairs, C, eps, "OT_Regression")
+    # results.append(("OT Regression (M1)", rmse_r, tinf_r, t_reg))
+    # print(f"  Train: {t_reg:.1f}s  RMSE: {rmse_r.mean():.2e}  Infer: {tinf_r.mean()*1000:.2f}ms")
 
-    # ── 2. OT Objective Sliced ────────────────────────────────────────────
-    print("\n[2/4] OT Objective Sliced (Method 2) ...")
-    from Solvers.Objective_SlicedOT.OT_Objective_Sliced import OT_Objective_Sliced
+    # # ── 2. OT Objective Sliced ────────────────────────────────────────────
+    # print("\n[2/4] OT Objective Sliced (Method 2) ...")
+    # from Solvers.Objective_SlicedOT.OT_Objective_Sliced import OT_Objective_Sliced
 
-    cfg_o = init_cfg("OT_Objective_Sliced")
-    cfg_o["num_bootstrap"] = args.M; cfg_o["epsilon"] = eps
-    model_obj = OT_Objective_Sliced(
-        make_cfg_proj("OT_Objective_Sliced", POOL_SEED, args.gpu, flag_time), cfg_o)
+    # cfg_o = init_cfg("OT_Objective_Sliced")
+    # cfg_o["num_bootstrap"] = args.M; cfg_o["epsilon"] = eps
+    # model_obj = OT_Objective_Sliced(
+    #     make_cfg_proj("OT_Objective_Sliced", POOL_SEED, args.gpu, flag_time), cfg_o)
 
-    t0 = time.perf_counter()
-    model_obj.alpha = model_obj._fit(dl_train)   # same dl_train!
-    model_obj.beta  = np.zeros(cfg_o["num_projections"])
-    t_obj = time.perf_counter() - t0
+    # t0 = time.perf_counter()
+    # model_obj.alpha = model_obj._fit(dl_train)   # same dl_train!
+    # model_obj.beta  = np.zeros(cfg_o["num_projections"])
+    # t_obj = time.perf_counter() - t0
 
-    def predict_obj(a, b):
-        f, g = model_obj._predict_potentials(a, b, model_obj.alpha)
-        return model_obj._potentials_to_plan(a, b, f, g)
+    # def predict_obj(a, b):
+    #     f, g = model_obj._predict_potentials(a, b, model_obj.alpha)
+    #     return model_obj._potentials_to_plan(a, b, f, g)
 
-    save_model(model_obj, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
-    rmse_o, tinf_o = evaluate(predict_obj, test_pairs, C, eps, "OT_Objective")
-    results.append(("OT Objective (M2)", rmse_o, tinf_o, t_obj))
-    print(f"  Train: {t_obj:.1f}s  RMSE: {rmse_o.mean():.2e}  Infer: {tinf_o.mean()*1000:.2f}ms")
+    # save_model(model_obj, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
+    # rmse_o, tinf_o = evaluate(predict_obj, test_pairs, C, eps, "OT_Objective")
+    # results.append(("OT Objective (M2)", rmse_o, tinf_o, t_obj))
+    # print(f"  Train: {t_obj:.1f}s  RMSE: {rmse_o.mean():.2e}  Infer: {tinf_o.mean()*1000:.2f}ms")
 
-    # ── 3. Meta OT (OT_Discrete) ──────────────────────────────────────────
-    print("\n[3/4] Meta OT GrayScale (baseline) ...")
-    from Solvers.Meta_OT.Meta_OT_gray_scale import OT_Discrete, dual_obj_loss
-    from Models.ot_models import PotentialMLP
+    # # ── 3. Meta OT (OT_Discrete) ──────────────────────────────────────────
+    # print("\n[3/4] Meta OT GrayScale (baseline) ...")
+    # from Solvers.Meta_OT.Meta_OT_gray_scale import OT_Discrete, dual_obj_loss
+    # from Models.ot_models import PotentialMLP
 
-    cfg_meta = init_cfg("OT_Discrete")
-    # Compute budget = 5000 gradient steps (same as Method 2 num_train_iter=5000).
-    # OT_Discrete uses epoch-based loop → epochs = 5000 // M to get ~5000 total steps.
-    T_target = 5000
-    cfg_meta["epochs"]       = max(1, T_target // args.M)
-    cfg_meta["batch_size"]   = 1
-    cfg_meta["log_interval"] = max(1, T_target // args.M)  # save 1 checkpoint at end
+    # cfg_meta = init_cfg("OT_Discrete")
+    # # Compute budget = 5000 gradient steps (same as Method 2 num_train_iter=5000).
+    # # OT_Discrete uses epoch-based loop → epochs = 5000 // M to get ~5000 total steps.
+    # T_target = 5000
+    # cfg_meta["epochs"]       = max(1, T_target // args.M)
+    # cfg_meta["batch_size"]   = 1
+    # cfg_meta["log_interval"] = max(1, T_target // args.M)  # save 1 checkpoint at end
 
-    cfg_proj_meta = make_cfg_proj("OT_Discrete", POOL_SEED, args.gpu, flag_time)
-    model_meta = OT_Discrete(cfg_proj_meta, cfg_meta)
+    # cfg_proj_meta = make_cfg_proj("OT_Discrete", POOL_SEED, args.gpu, flag_time)
+    # model_meta = OT_Discrete(cfg_proj_meta, cfg_meta)
 
-    t0 = time.perf_counter()
-    model_meta.OT_D_train(dl_train, None, flad_load_ckp=False)  # same dl_train!
-    t_meta = time.perf_counter() - t0
+    # t0 = time.perf_counter()
+    # model_meta.OT_D_train(dl_train, None, flad_load_ckp=False)  # same dl_train!
+    # t_meta = time.perf_counter() - t0
 
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    mlp_meta = PotentialMLP(dim_in=28**2*2, dim_out=28**2,
-                             hidden_num=cfg_meta.MLP_hidden_num).to(dev)
-    mlp_meta, _, _, _ = model_meta.load_ckp(mlp_meta, None, None, "OT_D-train")
-    mlp_meta.eval()
-    lf_meta = dual_obj_loss(img_size=28, epsilon=cfg_meta.epsilon, device=dev)
+    # dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # mlp_meta = PotentialMLP(dim_in=28**2*2, dim_out=28**2,
+    #                          hidden_num=cfg_meta.MLP_hidden_num).to(dev)
+    # mlp_meta, _, _, _ = model_meta.load_ckp(mlp_meta, None, None, "OT_D-train")
+    # mlp_meta.eval()
+    # lf_meta = dual_obj_loss(img_size=28, epsilon=cfg_meta.epsilon, device=dev)
 
-    def predict_meta(a, b):
-        a_t = torch.tensor(a, dtype=torch.float64, device=dev).unsqueeze(0)
-        b_t = torch.tensor(b, dtype=torch.float64, device=dev).unsqueeze(0)
-        with torch.no_grad():
-            f = mlp_meta(a_t, b_t)
-        return lf_meta.pred_transport(a_t, b_t, f)[0]
+    # def predict_meta(a, b):
+    #     a_t = torch.tensor(a, dtype=torch.float64, device=dev).unsqueeze(0)
+    #     b_t = torch.tensor(b, dtype=torch.float64, device=dev).unsqueeze(0)
+    #     with torch.no_grad():
+    #         f = mlp_meta(a_t, b_t)
+    #     return lf_meta.pred_transport(a_t, b_t, f)[0]
 
-    model_meta._eval_mlp = mlp_meta
-    model_meta._eval_lf  = lf_meta
-    save_model(model_meta, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
-    rmse_m, tinf_m = evaluate(predict_meta, test_pairs, C, eps, "Meta OT")
-    results.append(("Meta OT (baseline)", rmse_m, tinf_m, t_meta))
-    print(f"  Train: {t_meta:.1f}s  RMSE: {rmse_m.mean():.2e}  Infer: {tinf_m.mean()*1000:.2f}ms")
+    # model_meta._eval_mlp = mlp_meta
+    # model_meta._eval_lf  = lf_meta
+    # save_model(model_meta, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
+    # rmse_m, tinf_m = evaluate(predict_meta, test_pairs, C, eps, "Meta OT")
+    # results.append(("Meta OT (baseline)", rmse_m, tinf_m, t_meta))
+    # print(f"  Train: {t_meta:.1f}s  RMSE: {rmse_m.mean():.2e}  Infer: {tinf_m.mean()*1000:.2f}ms")
 
-    # ── 4. min-SWGG ───────────────────────────────────────────────────────
-    print("\n[4/4] min-SWGG GrayScale (baseline, no training) ...")
-    from Solvers.SWGG.min_SWGG_GrayScale import min_SWGG_GrayScale
+    # # ── 4. min-SWGG ───────────────────────────────────────────────────────
+    # print("\n[4/4] min-SWGG GrayScale (baseline, no training) ...")
+    # from Solvers.SWGG.min_SWGG_GrayScale import min_SWGG_GrayScale
 
-    cfg_swgg = init_cfg("min_SWGG_GrayScale")
-    cfg_swgg["epsilon"] = eps
-    model_swgg = min_SWGG_GrayScale(
-        make_cfg_proj("min_SWGG_GrayScale", POOL_SEED, args.gpu, flag_time), cfg_swgg)
+    # cfg_swgg = init_cfg("min_SWGG_GrayScale")
+    # cfg_swgg["epsilon"] = eps
+    # model_swgg = min_SWGG_GrayScale(
+    #     make_cfg_proj("min_SWGG_GrayScale", POOL_SEED, args.gpu, flag_time), cfg_swgg)
 
-    save_model(model_swgg, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
-    rmse_s, tinf_s = evaluate(model_swgg.predict_plan, test_pairs, C, eps, "min-SWGG")
-    results.append(("min-SWGG (baseline)", rmse_s, tinf_s, 0.0))
-    print(f"  RMSE: {rmse_s.mean():.2e}  Infer: {tinf_s.mean()*1000:.2f}ms")
+    # save_model(model_swgg, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
+    # rmse_s, tinf_s = evaluate(model_swgg.predict_plan, test_pairs, C, eps, "min-SWGG")
+    # results.append(("min-SWGG (baseline)", rmse_s, tinf_s, 0.0))
+    # print(f"  RMSE: {rmse_s.mean():.2e}  Infer: {tinf_s.mean()*1000:.2f}ms")
 
     
 
