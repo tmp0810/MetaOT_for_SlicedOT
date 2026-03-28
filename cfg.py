@@ -31,7 +31,7 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced":
         cfg_m.insert("num_bootstrap", 50)
-        cfg_m.insert("num_projections", 1000)
+        cfg_m.insert("num_projections", 100)
         cfg_m.insert("ridge", 1e-3)
         cfg_m.insert("img_size", 28)
         cfg_m.insert("epsilon", 0.1)
@@ -44,7 +44,7 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced_World":
         cfg_m.insert("num_bootstrap", 50)       # M: training pairs
-        cfg_m.insert("num_projections", 1000)     # L: stereographic 1-D directions
+        cfg_m.insert("num_projections", 100)     # L: stereographic 1-D directions
         cfg_m.insert("ridge", 0.05)
         cfg_m.insert("n_supply", 100)            # number of supply locations
         cfg_m.insert("n_demand", 10_000)         # number of demand locations
@@ -59,7 +59,7 @@ def init_cfg(n_solver):
 
     elif n_solver == "OT_Regression_Sliced_Color":
         cfg_m.insert("num_bootstrap", 50)       # M: training pairs
-        cfg_m.insert("num_projections", 1000)     # L: 1-D projection dirs in R^3
+        cfg_m.insert("num_projections", 100)     # L: 1-D projection dirs in R^3
         cfg_m.insert("ridge", 1e-3)
         cfg_m.insert("n_clusters", 500)          # KMeans clusters per image
         cfg_m.insert("img_size", 0)              # unused, kept for interface compat
@@ -114,7 +114,7 @@ def init_cfg(n_solver):
     elif n_solver == "OT_Objective_Sliced":
         cfg_m.insert("num_bootstrap",    50)    
         cfg_m.insert("num_train_iter", 5000)   
-        cfg_m.insert("num_projections", 1000) 
+        cfg_m.insert("num_projections", 100) 
         cfg_m.insert("img_size",         28)
         cfg_m.insert("epsilon",        1e-2)    # same as Meta OT paper MNIST
         cfg_m.insert("learning_rate",  1e-3)    # Adam lr for α
@@ -129,7 +129,7 @@ def init_cfg(n_solver):
     elif n_solver == "OT_Objective_Sliced_World":
         cfg_m.insert("num_bootstrap",    50)    # M: pair pool size
         cfg_m.insert("num_train_iter", 5000)    # T: total gradient steps
-        cfg_m.insert("num_projections", 1000)    # L: stereographic directions
+        cfg_m.insert("num_projections", 100)    # L: stereographic directions
         cfg_m.insert("n_supply",        100)
         cfg_m.insert("n_demand",     10_000)
         cfg_m.insert("supply_bernoulli_p", 0.5)
@@ -146,7 +146,7 @@ def init_cfg(n_solver):
     elif n_solver == "OT_Objective_Sliced_Color":
         cfg_m.insert("num_bootstrap",    50)    
         cfg_m.insert("num_train_iter", 5000)  
-        cfg_m.insert("num_projections", 1000)    
+        cfg_m.insert("num_projections", 100)    
         cfg_m.insert("n_clusters",      500)    
         cfg_m.insert("img_size",          0)    
         cfg_m.insert("epsilon",         0.1)   
