@@ -214,65 +214,65 @@ def main():
 
     results = []
 
-    # ── 1. OT Regression Sliced Color ─────────────────────────────────────
-    print("[1/4] OT Regression Sliced Color (Method 1) ...")
-    from Solvers.Regression_SlicedOT.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
-    cfg1 = init_cfg("OT_Regression_Sliced_Color")
-    cfg1["num_bootstrap"] = args.M; cfg1["n_clusters"] = args.n_clusters
-    cfg1["epsilon"] = EPS
-    model1 = OT_Regression_Sliced_Color(
-        make_cfg_proj("OT_Regression_Sliced_Color", POOL_SEED, args.gpu, flag_time), cfg1)
-    t0 = time.perf_counter()
-    model1.alpha = model1._fit(dl_shared)
-    model1.beta  = np.zeros_like(model1.alpha)
-    t1 = time.perf_counter() - t0
-    save_model(model1, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
-    rmse1, tinf1 = evaluate_color(model1.predict_plan, test_pairs, EPS, "OT_Regression")
-    results.append(("OT Regression (M1)", rmse1, tinf1, t1))
-    print(f"  Train: {t1:.1f}s  RMSE: {rmse1.mean():.2e}")
+    # # ── 1. OT Regression Sliced Color ─────────────────────────────────────
+    # print("[1/4] OT Regression Sliced Color (Method 1) ...")
+    # from Solvers.Regression_SlicedOT.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
+    # cfg1 = init_cfg("OT_Regression_Sliced_Color")
+    # cfg1["num_bootstrap"] = args.M; cfg1["n_clusters"] = args.n_clusters
+    # cfg1["epsilon"] = EPS
+    # model1 = OT_Regression_Sliced_Color(
+    #     make_cfg_proj("OT_Regression_Sliced_Color", POOL_SEED, args.gpu, flag_time), cfg1)
+    # t0 = time.perf_counter()
+    # model1.alpha = model1._fit(dl_shared)
+    # model1.beta  = np.zeros_like(model1.alpha)
+    # t1 = time.perf_counter() - t0
+    # save_model(model1, os.path.join(args.out, f"M{args.M}", "regression.pkl"))
+    # rmse1, tinf1 = evaluate_color(model1.predict_plan, test_pairs, EPS, "OT_Regression")
+    # results.append(("OT Regression (M1)", rmse1, tinf1, t1))
+    # print(f"  Train: {t1:.1f}s  RMSE: {rmse1.mean():.2e}")
 
-    # ── 2. OT Objective Sliced Color ──────────────────────────────────────
-    print("\n[2/4] OT Objective Sliced Color (Method 2) ...")
-    from Solvers.Objective_SlicedOT.OT_Objective_Sliced_Color import OT_Objective_Sliced_Color
-    cfg2 = init_cfg("OT_Objective_Sliced_Color")
-    cfg2["num_bootstrap"] = args.M; cfg2["n_clusters"] = args.n_clusters
-    cfg2["epsilon"] = EPS
-    model2 = OT_Objective_Sliced_Color(
-        make_cfg_proj("OT_Objective_Sliced_Color", POOL_SEED, args.gpu, flag_time), cfg2)
-    t0 = time.perf_counter()
-    model2.alpha = model2._fit(dl_shared)
-    t2 = time.perf_counter() - t0
-    save_model(model2, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
-    rmse2, tinf2 = evaluate_color(model2.predict_plan, test_pairs, EPS, "OT_Objective")
-    results.append(("OT Objective (M2)", rmse2, tinf2, t2))
-    print(f"  Train: {t2:.1f}s  RMSE: {rmse2.mean():.2e}")
+    # # ── 2. OT Objective Sliced Color ──────────────────────────────────────
+    # print("\n[2/4] OT Objective Sliced Color (Method 2) ...")
+    # from Solvers.Objective_SlicedOT.OT_Objective_Sliced_Color import OT_Objective_Sliced_Color
+    # cfg2 = init_cfg("OT_Objective_Sliced_Color")
+    # cfg2["num_bootstrap"] = args.M; cfg2["n_clusters"] = args.n_clusters
+    # cfg2["epsilon"] = EPS
+    # model2 = OT_Objective_Sliced_Color(
+    #     make_cfg_proj("OT_Objective_Sliced_Color", POOL_SEED, args.gpu, flag_time), cfg2)
+    # t0 = time.perf_counter()
+    # model2.alpha = model2._fit(dl_shared)
+    # t2 = time.perf_counter() - t0
+    # save_model(model2, os.path.join(args.out, f"M{args.M}", "objective.pkl"))
+    # rmse2, tinf2 = evaluate_color(model2.predict_plan, test_pairs, EPS, "OT_Objective")
+    # results.append(("OT Objective (M2)", rmse2, tinf2, t2))
+    # print(f"  Train: {t2:.1f}s  RMSE: {rmse2.mean():.2e}")
 
-    # ── 3. Meta OT Color ──────────────────────────────────────────────────
-    print("\n[3/4] Meta OT Color Discrete (baseline) ...")
-    from Solvers.Meta_OT.Meta_OT_Color import Meta_OT_Color
-    cfg3 = init_cfg("Meta_OT_Color")
-    cfg3["n_clusters"] = args.n_clusters; cfg3["epsilon"] = EPS
-    model3 = Meta_OT_Color(
-        make_cfg_proj("Meta_OT_Color", POOL_SEED, args.gpu, flag_time), cfg3)
-    t0 = time.perf_counter()
-    model3.train(dl_shared)
-    t3 = time.perf_counter() - t0
-    save_model(model3, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
-    rmse3, tinf3 = evaluate_color(model3.predict_plan, test_pairs, EPS, "Meta OT")
-    results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
-    print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
+    # # ── 3. Meta OT Color ──────────────────────────────────────────────────
+    # print("\n[3/4] Meta OT Color Discrete (baseline) ...")
+    # from Solvers.Meta_OT.Meta_OT_Color import Meta_OT_Color
+    # cfg3 = init_cfg("Meta_OT_Color")
+    # cfg3["n_clusters"] = args.n_clusters; cfg3["epsilon"] = EPS
+    # model3 = Meta_OT_Color(
+    #     make_cfg_proj("Meta_OT_Color", POOL_SEED, args.gpu, flag_time), cfg3)
+    # t0 = time.perf_counter()
+    # model3.train(dl_shared)
+    # t3 = time.perf_counter() - t0
+    # save_model(model3, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
+    # rmse3, tinf3 = evaluate_color(model3.predict_plan, test_pairs, EPS, "Meta OT")
+    # results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
+    # print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
-    # ── 4. min-SWGG Color ─────────────────────────────────────────────────
-    print("\n[4/4] min-SWGG Color (baseline, no training) ...")
-    from Solvers.SWGG.min_SWGG_Color import min_SWGG_Color
-    cfg4 = init_cfg("min_SWGG_Color")
-    cfg4["n_clusters"] = args.n_clusters; cfg4["epsilon"] = EPS
-    model4 = min_SWGG_Color(
-        make_cfg_proj("min_SWGG_Color", POOL_SEED, args.gpu, flag_time), cfg4)
-    save_model(model4, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
-    rmse4, tinf4 = evaluate_color(model4.predict_plan, test_pairs, EPS, "min-SWGG")
-    results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
-    print(f"  RMSE: {rmse4.mean():.2e}")
+    # # ── 4. min-SWGG Color ─────────────────────────────────────────────────
+    # print("\n[4/4] min-SWGG Color (baseline, no training) ...")
+    # from Solvers.SWGG.min_SWGG_Color import min_SWGG_Color
+    # cfg4 = init_cfg("min_SWGG_Color")
+    # cfg4["n_clusters"] = args.n_clusters; cfg4["epsilon"] = EPS
+    # model4 = min_SWGG_Color(
+    #     make_cfg_proj("min_SWGG_Color", POOL_SEED, args.gpu, flag_time), cfg4)
+    # save_model(model4, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
+    # rmse4, tinf4 = evaluate_color(model4.predict_plan, test_pairs, EPS, "min-SWGG")
+    # results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
+    # print(f"  RMSE: {rmse4.mean():.2e}")
 
     # ── 5. Min-STP Color ──────────────────────────────────────────────────
     print("\n[5/5] Min-STP Color (baseline) ...")
