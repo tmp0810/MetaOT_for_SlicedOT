@@ -1,1 +1,1 @@
-!python main.py --solver OT_Regression_Sliced --data_name MNIST
+MetaOT_for_SlicedOT
