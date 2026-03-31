@@ -194,50 +194,50 @@ def main():
     results.append(("OT Objective (M2)", rmse2, tinf2, t2))
     print(f"  Train: {t2:.1f}s  RMSE: {rmse2.mean():.2e}")
 
-    # # ── 3. Meta OT World ──────────────────────────────────────────────────
-    # print("\n[3/4] Meta OT World (baseline) ...")
-    # from Solvers.Meta_OT.Meta_OT_World import Meta_OT_World
-    # cfg3 = init_cfg("Meta_OT_World")
-    # cfg3["epsilon"] = eps; cfg3["n_supply"] = args.n_supply; cfg3["n_demand"] = args.n_demand
-    # model3 = Meta_OT_World(
-    #     make_cfg_proj("Meta_OT_World", POOL_SEED, args.gpu, flag_time),
-    #     cfg3, supply_euc, demand_euc, supply_sph, demand_sph)
-    # t0 = time.perf_counter()
-    # model3.train(dl_shared)
-    # t3 = time.perf_counter() - t0
-    # save_model(model3, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
-    # rmse3, tinf3 = evaluate(model3.predict_plan, test_pairs, C, eps, "Meta OT")
-    # results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
-    # print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
+    # ── 3. Meta OT World ──────────────────────────────────────────────────
+    print("\n[3/4] Meta OT World (baseline) ...")
+    from Solvers.Meta_OT.Meta_OT_World import Meta_OT_World
+    cfg3 = init_cfg("Meta_OT_World")
+    cfg3["epsilon"] = eps; cfg3["n_supply"] = args.n_supply; cfg3["n_demand"] = args.n_demand
+    model3 = Meta_OT_World(
+        make_cfg_proj("Meta_OT_World", POOL_SEED, args.gpu, flag_time),
+        cfg3, supply_euc, demand_euc, supply_sph, demand_sph)
+    t0 = time.perf_counter()
+    model3.train(dl_shared)
+    t3 = time.perf_counter() - t0
+    save_model(model3, os.path.join(args.out, f"M{args.M}", "meta_ot.pkl"))
+    rmse3, tinf3 = evaluate(model3.predict_plan, test_pairs, C, eps, "Meta OT")
+    results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
+    print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
-    # # ── 4. min-SWGG World ─────────────────────────────────────────────────
-    # print("\n[4/4] min-SWGG World (baseline, no training) ...")
-    # from Solvers.SWGG.min_SWGG_World import min_SWGG_World
-    # cfg4 = init_cfg("min_SWGG_World")
-    # cfg4["epsilon"] = eps; cfg4["n_supply"] = args.n_supply; cfg4["n_demand"] = args.n_demand
-    # model4 = min_SWGG_World(
-    #     make_cfg_proj("min_SWGG_World", POOL_SEED, args.gpu, flag_time),
-    #     cfg4, supply_euc, demand_euc, supply_sph, demand_sph)
-    # save_model(model4, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
-    # rmse4, tinf4 = evaluate(model4.predict_plan, test_pairs, C, eps, "min-SWGG")
-    # results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
-    # print(f"  RMSE: {rmse4.mean():.2e}")
+    # ── 4. min-SWGG World ─────────────────────────────────────────────────
+    print("\n[4/4] min-SWGG World (baseline, no training) ...")
+    from Solvers.SWGG.min_SWGG_World import min_SWGG_World
+    cfg4 = init_cfg("min_SWGG_World")
+    cfg4["epsilon"] = eps; cfg4["n_supply"] = args.n_supply; cfg4["n_demand"] = args.n_demand
+    model4 = min_SWGG_World(
+        make_cfg_proj("min_SWGG_World", POOL_SEED, args.gpu, flag_time),
+        cfg4, supply_euc, demand_euc, supply_sph, demand_sph)
+    save_model(model4, os.path.join(args.out, f"M{args.M}", "swgg.pkl"))
+    rmse4, tinf4 = evaluate(model4.predict_plan, test_pairs, C, eps, "min-SWGG")
+    results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
+    print(f"  RMSE: {rmse4.mean():.2e}")
 
-    # # ── 5. Min-STP World ──────────────────────────────────────────────────
-    # print("\n[5/5] Min-STP World (baseline) ...")
-    # from Solvers.MinSTP.Min_STP_World import Min_STP_World
-    # cfg3 = init_cfg("Min_STP_World")
-    # cfg3["n_supply"] = args.n_supply; cfg3["n_demand"] = args.n_demand
-    # model3 = Min_STP_World(
-    #     make_cfg_proj("Min_STP_World", POOL_SEED, args.gpu, flag_time),
-    #     cfg3, supply_euc, demand_euc, supply_sph, demand_sph)
-    # t0 = time.perf_counter()
-    # model3.train(dl_shared)
-    # t3 = time.perf_counter() - t0
-    # save_model(model3, os.path.join(args.out, f"M{args.M}", "min_stp.pkl"))
-    # rmse3, tinf3 = evaluate(model3.predict_plan, test_pairs, C, eps, "Min-STP")
-    # results.append(("Min-STP (baseline)", rmse3, tinf3, t3))
-    # print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
+    # ── 5. Min-STP World ──────────────────────────────────────────────────
+    print("\n[5/5] Min-STP World (baseline) ...")
+    from Solvers.MinSTP.Min_STP_World import Min_STP_World
+    cfg3 = init_cfg("Min_STP_World")
+    cfg3["n_supply"] = args.n_supply; cfg3["n_demand"] = args.n_demand
+    model3 = Min_STP_World(
+        make_cfg_proj("Min_STP_World", POOL_SEED, args.gpu, flag_time),
+        cfg3, supply_euc, demand_euc, supply_sph, demand_sph)
+    t0 = time.perf_counter()
+    model3.train(dl_shared)
+    t3 = time.perf_counter() - t0
+    save_model(model3, os.path.join(args.out, f"M{args.M}", "min_stp.pkl"))
+    rmse3, tinf3 = evaluate(model3.predict_plan, test_pairs, C, eps, "Min-STP")
+    results.append(("Min-STP (baseline)", rmse3, tinf3, t3))
+    print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
     print_table(results, args.M, args.N)
 
