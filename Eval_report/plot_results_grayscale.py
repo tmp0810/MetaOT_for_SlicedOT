@@ -159,7 +159,7 @@ def main():
     model_obj  = load_pkl(os.path.join(args.result_dir, "objective.pkl"))
     model_meta = load_pkl(os.path.join(args.result_dir, "meta_ot.pkl"))
     model_swgg = load_pkl(os.path.join(args.result_dir, "swgg.pkl"))
-    #model_stp  = load_pkl(os.path.join(args.result_dir, "min_stp.pkl"))
+    model_stp  = load_pkl(os.path.join(args.result_dir, "min_stp.pkl"))
 
     # Meta OT MLP was saved inside the pickle
     mlp     = model_meta._eval_mlp
@@ -193,7 +193,7 @@ def main():
         ("OT_Objective",   predict_obj),
         ("Meta_OT",        predict_meta),
         ("min_SWGG",       model_swgg.predict_plan),
-        #("Min_STP",        model_stp.predict_plan),
+        ("Min_STP",        model_stp.predict_plan),
     ]
 
     # ── Select pairs to plot ───────────────────────────────────────────────
