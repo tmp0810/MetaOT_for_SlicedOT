@@ -13,6 +13,8 @@ from PIL import Image
 
 plt.style.use("bmh")
 
+
+
 def apply_color_transfer(
     src_img:     np.ndarray,   # (H, W, 3) uint8  original source image
     src_labels:  np.ndarray,   # (H*W,)    int64  KMeans label per pixel
@@ -27,10 +29,6 @@ def apply_color_transfer(
 
 
 def save_image(arr: np.ndarray, path: str):
-    """
-    Save a (H, W, 3) uint8 numpy array as a PNG — no axes, no padding,
-    exactly as the paper does with PIL / plt.imsave.
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     Image.fromarray(arr).save(path)
     print(f"    Saved → {path}")
@@ -48,6 +46,8 @@ def parse_args():
                    help="Skip Sinkhorn GT computation")
     return p.parse_args()
 
+
+# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args = parse_args()
@@ -70,9 +70,6 @@ def main():
 
     eps = float(model_reg.cfg_m.epsilon)
     print(f"eps = {eps}")
-
-    # All methods that produce a transport plan
-    # predict_fn signature: (src_w, tgt_w, src_c, tgt_c) → P (K_src, K_tgt)
     methods = [
         ("OT_Regression", model_reg.predict_plan),
         ("OT_Objective",  model_obj.predict_plan),
