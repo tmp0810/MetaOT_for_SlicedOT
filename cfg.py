@@ -13,7 +13,7 @@ def init_cfg(n_solver):
         cfg_m.insert("batch_size", 1024)
         cfg_m.insert("valid_rate", 0.0)
         cfg_m.insert("img_size", 28)
-        cfg_m.insert("epsilon", 1e-2)
+        cfg_m.insert("epsilon", 0.1)
         cfg_m.insert("MLP_hidden_num", 3)
 
     elif n_solver == "Meta_OT_Color":
@@ -25,7 +25,7 @@ def init_cfg(n_solver):
         cfg_m.insert("max_grad_norm",  1.0)
         cfg_m.insert("batch_size",     4)    # pairs per gradient step
         cfg_m.insert("log_interval",   5000) # ban đầu là 100
-        cfg_m.insert("epsilon",        0.1)
+        cfg_m.insert("epsilon",        0.005)
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
 
@@ -107,7 +107,7 @@ def init_cfg(n_solver):
     elif n_solver == "min_SWGG_Color":
         cfg_m.insert("n_projections", 200)   
         cfg_m.insert("n_clusters",    500)    
-        cfg_m.insert("epsilon",       0.1)    
+        cfg_m.insert("epsilon",       0.005)    
         cfg_m.insert("device", "cuda")
         cfg_m.insert("gpu", 0)
 
@@ -165,7 +165,7 @@ def init_cfg(n_solver):
         cfg_m.insert("hidden_dim",    128)
         cfg_m.insert("num_train_iter", 5000)
         cfg_m.insert("learning_rate",  1e-3)
-        cfg_m.insert("alpha",          0.05)
+        cfg_m.insert("alpha",          0.1)
         cfg_m.insert("max_grad_norm",  1.0)
         cfg_m.insert("log_interval",   100)
         cfg_m.insert("device", "cuda")
