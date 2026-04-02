@@ -176,7 +176,7 @@ def init_cfg(n_solver):
         cfg_m.insert("hidden_dim",    128)
         cfg_m.insert("num_train_iter", 5000)
         cfg_m.insert("learning_rate",  1e-3)
-        cfg_m.insert("alpha",          0.05)
+        cfg_m.insert("alpha",          0.5)
         cfg_m.insert("max_grad_norm",  1.0)
         cfg_m.insert("log_interval",   100)
         cfg_m.insert("n_supply",       100)
