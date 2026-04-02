@@ -116,7 +116,7 @@ def init_cfg(n_solver):
         cfg_m.insert("num_train_iter", 5000)   
         cfg_m.insert("num_projections", 100) 
         cfg_m.insert("img_size",         28)
-        cfg_m.insert("epsilon",        1e-2)    # same as Meta OT paper MNIST
+        cfg_m.insert("epsilon",        0.1)    # same as Meta OT paper MNIST
         cfg_m.insert("learning_rate",  1e-3)    # Adam lr for α
         cfg_m.insert("max_grad_norm",   1.0)   
         cfg_m.insert("batch_size",       64)    # dataloader batch size
@@ -149,7 +149,7 @@ def init_cfg(n_solver):
         cfg_m.insert("num_projections", 100)    
         cfg_m.insert("n_clusters",      500)    
         cfg_m.insert("img_size",          0)    
-        cfg_m.insert("epsilon",         0.1)   
+        cfg_m.insert("epsilon",         0.005)   
         cfg_m.insert("learning_rate",  1e-3)
         cfg_m.insert("max_grad_norm",   1.0)
         cfg_m.insert("batch_size",        1)   
