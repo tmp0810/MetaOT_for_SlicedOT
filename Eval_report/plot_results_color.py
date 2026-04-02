@@ -62,20 +62,20 @@ def main():
         with open(os.path.join(args.result_dir, name), "rb") as f:
             return pickle.load(f)
 
-    model_reg  = load_pkl("regression.pkl")
-    model_obj  = load_pkl("objective.pkl")
+    # model_reg  = load_pkl("regression.pkl")
+    # model_obj  = load_pkl("objective.pkl")
     model_meta = load_pkl("meta_ot.pkl")
-    model_swgg = load_pkl("swgg.pkl")
-    model_stp  = load_pkl("min_stp.pkl")
+    # model_swgg = load_pkl("swgg.pkl")
+    # model_stp  = load_pkl("min_stp.pkl")
 
     eps = float(model_reg.cfg_m.epsilon)
     print(f"eps = {eps}")
     methods = [
-        ("OT_Regression", model_reg.predict_plan),
-        ("OT_Objective",  model_obj.predict_plan),
+        # ("OT_Regression", model_reg.predict_plan),
+        # ("OT_Objective",  model_obj.predict_plan),
         ("Meta_OT",       model_meta.predict_plan),
-        ("min_SWGG",      model_swgg.predict_plan),
-        ("Min_STP",       model_stp.predict_plan),
+        # ("min_SWGG",      model_swgg.predict_plan),
+        # ("Min_STP",       model_stp.predict_plan),
     ]
 
     # test_pairs format: (sw, sc, sl, src_img, tw, tc, tgt_img, src_path, tgt_path)
