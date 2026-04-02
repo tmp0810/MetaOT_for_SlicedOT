@@ -155,11 +155,11 @@ def main():
     print(f"Loaded {len(test_pairs)} test pairs from {args.result_dir}")
 
     # ── Load trained models ────────────────────────────────────────────────
-    model_reg  = load_pkl(os.path.join(args.result_dir, "regression.pkl"))
-    model_obj  = load_pkl(os.path.join(args.result_dir, "objective.pkl"))
+    # model_reg  = load_pkl(os.path.join(args.result_dir, "regression.pkl"))
+    # model_obj  = load_pkl(os.path.join(args.result_dir, "objective.pkl"))
     model_meta = load_pkl(os.path.join(args.result_dir, "meta_ot.pkl"))
-    model_swgg = load_pkl(os.path.join(args.result_dir, "swgg.pkl"))
-    model_stp  = load_pkl(os.path.join(args.result_dir, "min_stp.pkl"))
+    # model_swgg = load_pkl(os.path.join(args.result_dir, "swgg.pkl"))
+    # model_stp  = load_pkl(os.path.join(args.result_dir, "min_stp.pkl"))
 
     # Meta OT MLP was saved inside the pickle
     mlp     = model_meta._eval_mlp
@@ -189,11 +189,11 @@ def main():
     # Method name → predict function  (order = paper display order)
     methods = [
         ("Sinkhorn_GT",    predict_gt),
-        ("OT_Regression",  predict_reg),
-        ("OT_Objective",   predict_obj),
+        # ("OT_Regression",  predict_reg),
+        # ("OT_Objective",   predict_obj),
         ("Meta_OT",        predict_meta),
-        ("min_SWGG",       model_swgg.predict_plan),
-        ("Min_STP",        model_stp.predict_plan),
+        # ("min_SWGG",       model_swgg.predict_plan),
+        # ("Min_STP",        model_stp.predict_plan),
     ]
 
     # ── Select pairs to plot ───────────────────────────────────────────────
