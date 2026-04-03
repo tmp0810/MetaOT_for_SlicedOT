@@ -102,9 +102,7 @@ class AmortizedRA_OT:
         x1 = x1.to(dtype=torch.float64, device=self.device)
 
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
-        # Use same eps scale as training
-        eps = getattr(self, '_eps_scale',
-                      float(np.median(C) / np.log(B)))
+        eps = 1
 
         Phi = self._compute_sliced_potentials(x0, x1).cpu().numpy()
         f = (Phi @ self.alpha)
