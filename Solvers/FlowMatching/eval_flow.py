@@ -171,7 +171,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--datasets", nargs="+",
                         default=["8gaussians", "moons", "scurve"])
-    parser.add_argument("--n_steps",  type=int, default=20000)
+    parser.add_argument("--n_steps",  type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--L",        type=int, default=100)
     parser.add_argument("--eps",      type=float, default=0.1)
