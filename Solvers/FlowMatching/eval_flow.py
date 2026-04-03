@@ -17,23 +17,38 @@ from Solvers.FlowMatching.RA_OT_flow import AmortizedRA_OT
 from Solvers.FlowMatching.OA_OT_flow import AmortizedOA_OT
 
 
+import math
+from torchdyn.datasets import generate_moons
+
 def sample_gaussian(n):
     return torch.randn(n, 2)
 
+def eight_normal_sample(n, dim, scale=1, var=1):
+    m = torch.distributions.multivariate_normal.MultivariateNormal(
+        torch.zeros(dim), math.sqrt(var) * torch.eye(dim)
+    )
+    centers = [
+        (1, 0), (-1, 0), (0, 1), (0, -1),
+        (1.0 / np.sqrt(2), 1.0 / np.sqrt(2)),
+        (1.0 / np.sqrt(2), -1.0 / np.sqrt(2)),
+        (-1.0 / np.sqrt(2), 1.0 / np.sqrt(2)),
+        (-1.0 / np.sqrt(2), -1.0 / np.sqrt(2)),
+    ]
+    centers = torch.tensor(centers) * scale
+    noise = m.sample((n,))
+    multi = torch.multinomial(torch.ones(8), n, replacement=True)
+    data = []
+    for i in range(n):
+        data.append(centers[multi[i]] + noise[i])
+    data = torch.stack(data)
+    return data
+
 def sample_8gaussians(n):
-    centers = []
-    for i in range(8):
-        angle = 2 * np.pi * i / 8
-        centers.append([4 * np.cos(angle), 4 * np.sin(angle)])
-    centers = np.array(centers)
-    idx = np.random.randint(0, 8, size=n)
-    pts = centers[idx] + 0.5 * np.random.randn(n, 2)
-    return torch.tensor(pts, dtype=torch.float32)
+    return eight_normal_sample(n, 2, scale=5, var=0.1).float()
 
 def sample_moons(n):
-    data, _ = make_moons(n_samples=n, noise=0.1)
-    data = data * 2 - np.array([1.0, 0.25])
-    return torch.tensor(data, dtype=torch.float32)
+    x0, _ = generate_moons(n, noise=0.2)
+    return x0 * 3 - 1
 
 def sample_scurve(n):
     data, _ = make_s_curve(n_samples=n, noise=0.1)
@@ -47,17 +62,35 @@ TARGET_SAMPLERS = {
 }
 
 
-class FlowMLP(nn.Module):
-    def __init__(self, dim=2, hidden=64, n_layers=3):
+class MLP(torch.nn.Module):
+    def __init__(self, dim, out_dim=None, w=64, time_varying=False):
         super().__init__()
-        layers = [nn.Linear(dim + 1, hidden), nn.SELU()]
-        for _ in range(n_layers - 1):
-            layers += [nn.Linear(hidden, hidden), nn.SELU()]
-        layers.append(nn.Linear(hidden, dim))
-        self.net = nn.Sequential(*layers)
+        self.time_varying = time_varying
+        if out_dim is None:
+            out_dim = dim
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(dim + (1 if time_varying else 0), w),
+            torch.nn.SELU(),
+            torch.nn.Linear(w, w),
+            torch.nn.SELU(),
+            torch.nn.Linear(w, w),
+            torch.nn.SELU(),
+            torch.nn.Linear(w, out_dim),
+        )
 
     def forward(self, x):
         return self.net(x)
+
+
+class GradModel(torch.nn.Module):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def forward(self, x):
+        x = x.requires_grad_(True)
+        grad = torch.autograd.grad(torch.sum(self.action(x)), x, create_graph=True)[0]
+        return grad[:, :-1]
 
 
 class ODEWrapper(nn.Module):
@@ -70,7 +103,6 @@ class ODEWrapper(nn.Module):
         t_scalar = t.reshape(-1)[0]   # always a scalar value
         t_vec = t_scalar.expand(x.shape[0]).unsqueeze(-1)  # (N, 1)
         return self.model(torch.cat([x, t_vec], dim=-1))
-
 
 
 def pair_independent(x0, x1):
@@ -90,10 +122,11 @@ def pair_exact_ot(x0, x1):
 
 
 def train_flow(method_name, pair_fn, target_sampler,
-               n_steps=20000, batch_size=512, sigma=0.1, device="cpu"):
-    model = FlowMLP(dim=2).to(device)
-    opt   = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    FM    = ConditionalFlowMatcher(sigma=sigma)
+               n_steps=20000, batch_size=512, lr=1e-3, sigma=0.1, device="cpu"):
+    # Use original models.py MLP
+    model = MLP(dim=2, time_varying=True).to(device)
+    opt  = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    FM   = ConditionalFlowMatcher(sigma=sigma)
 
     t0 = time.time()
     for step in tqdm(range(n_steps), desc=f"FM-{method_name}"):
@@ -171,7 +204,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--datasets", nargs="+",
                         default=["8gaussians", "moons", "scurve"])
-    parser.add_argument("--n_steps",  type=int, default=10000)
+    parser.add_argument("--n_steps",  type=int, default=20000)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--L",        type=int, default=100)
     parser.add_argument("--eps",      type=float, default=0.1)
