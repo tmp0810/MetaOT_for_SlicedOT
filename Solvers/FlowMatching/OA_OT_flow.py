@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-OA_OT_flow.py — Objective-based Amortized OT for Flow Matching.
-
-Phase 1: Optimise weight vector α via the Kantorovich dual objective
-         (no ground-truth Sinkhorn needed).
-Phase 2: At each FM step, predict OT plan with the learned α.
-"""
-
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
