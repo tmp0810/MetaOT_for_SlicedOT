@@ -154,7 +154,7 @@ def train_flow(method_name, pair_fn, target_sampler,
 def generate_samples(model, n=10000, n_steps=101, device="cpu"):
     node = NeuralODE(
         ODEWrapper(model), solver="rk4",
-        sensitivity="adjoint", atol=1e-4, rtol=1e-4,
+        sensitivity="adjoint"
     ).to(device)
     x0 = sample_gaussian(n).to(device)
     t_span = torch.linspace(0, 1, n_steps, device=device)
@@ -168,14 +168,14 @@ def compute_w2(generated, target_test):
     t = target_test[:n].cpu().numpy()
     C = ot.dist(g, t, metric='sqeuclidean')
     a, b = ot.unif(n), ot.unif(n)
-    w2_sq = ot.emd2(a, b, C)
+    w2_sq = ot.emd2(a, b, C, numItermax=5000000)
     return float(np.sqrt(max(w2_sq, 0.0)))
 
 
 def compute_npe(model, n=2000, n_steps=101, device="cpu"):
     node = NeuralODE(
         ODEWrapper(model), solver="rk4",
-        sensitivity="adjoint", atol=1e-4, rtol=1e-4,
+        sensitivity="adjoint"
     ).to(device)
     x0 = sample_gaussian(n).to(device)
     t_span = torch.linspace(0, 1, n_steps, device=device)
@@ -195,7 +195,7 @@ def compute_npe(model, n=2000, n_steps=101, device="cpu"):
     x1_gen = traj[-1]
     C = ot.dist(x0.cpu().numpy(), x1_gen.cpu().numpy(), metric='sqeuclidean')
     a, b = ot.unif(n), ot.unif(n)
-    w2_sq = float(ot.emd2(a, b, C))
+    w2_sq = float(ot.emd2(a, b, C, numItermax=5000000))
     w2_sq = max(w2_sq, 1e-12)
 
     npe = abs(pe - w2_sq) / w2_sq
