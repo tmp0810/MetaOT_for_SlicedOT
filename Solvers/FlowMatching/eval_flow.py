@@ -151,12 +151,15 @@ def train_flow(method_name, pair_fn, target_sampler,
 
 @torch.no_grad()
 def generate_samples(model, n=10000, n_steps=100, device="cpu"):
-    node = NeuralODE(
-        ODEWrapper(model), solver="dopri5",
-        sensitivity="adjoint", atol=1e-4, rtol=1e-4,
-    ).to(device)
+    # node = NeuralODE(
+    #     ODEWrapper(model), solver="dopri5",
+    #     sensitivity="adjoint", atol=1e-4, rtol=1e-4,
+    # ).to(device)
+
+    node = NeuralODE(model_wrapper, solver='rk4', sensitivity='adjoint')
     x0 = sample_gaussian(n).to(device)
-    t_span = torch.linspace(0, 1, n_steps, device=device)
+    #t_span = torch.linspace(0, 1, n_steps, device=device)
+    t_span = torch.linspace(0, 1, 101).to(device)
     traj = node.trajectory(x0, t_span=t_span)        # (T, N, 2)
     return traj                                        # full trajectories
 
