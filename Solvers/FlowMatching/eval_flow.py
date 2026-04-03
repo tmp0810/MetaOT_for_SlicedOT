@@ -65,8 +65,10 @@ class ODEWrapper(nn.Module):
         super().__init__()
         self.model = model
 
-    def forward(self, t, x):
-        t_vec = t.expand(x.shape[0], 1) if t.dim() == 0 else t[:, None]
+    def forward(self, t, x, **kwargs):
+        # t may be 0-dim scalar, (1,), or (N,) depending on torchdyn solver step
+        t_scalar = t.reshape(-1)[0]   # always a scalar value
+        t_vec = t_scalar.expand(x.shape[0]).unsqueeze(-1)  # (N, 1)
         return self.model(torch.cat([x, t_vec], dim=-1))
 
 
