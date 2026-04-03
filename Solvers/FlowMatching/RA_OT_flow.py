@@ -35,7 +35,7 @@ class AmortizedRA_OT:
         self.alpha = None
         self.pretrain_time = 0.0
 
-    # ------------------------------------------------------------------
+    
     def _compute_sliced_potentials(self, x0, x1):
         B = x0.shape[0]
         proj_x0 = x0 @ self.proj_dirs.T       # (B, L)
@@ -53,7 +53,7 @@ class AmortizedRA_OT:
         Phi = Phi - Phi.mean(dim=0, keepdim=True)
         return Phi
 
-    # ------------------------------------------------------------------
+    
     def _solve_sinkhorn_potential(self, x0, x1):
         B = x0.shape[0]
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
@@ -70,7 +70,7 @@ class AmortizedRA_OT:
         f = f - f.mean()
         return f, eps
 
-    # ------------------------------------------------------------------
+    
     def pretrain(self, source_sampler, target_sampler, M=50, B=512):
         print(f"[RA-OT] Pre-training  M={M}  B={B}  L={self.L}  eps={self.eps}")
         Phi_list, y_list = [], []
@@ -94,7 +94,7 @@ class AmortizedRA_OT:
         print(f"[RA-OT] Done in {self.pretrain_time:.2f}s")
         return self.alpha
 
-    # ------------------------------------------------------------------
+    
     def predict_plan(self, x0, x1):
         assert self.alpha is not None, "Call pretrain() first."
         B = x0.shape[0]
@@ -132,7 +132,7 @@ class AmortizedRA_OT:
         P /= P.sum(axis=0, keepdims=True) + 1e-30
         return P
 
-    # ------------------------------------------------------------------
+    
     def sample_pairs(self, x0, x1):
         B = x0.shape[0]
         P = self.predict_plan(x0, x1)
