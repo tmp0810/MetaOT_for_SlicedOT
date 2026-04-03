@@ -25,7 +25,7 @@ class AmortizedOA_OT:
         self.alpha = None
         self.pretrain_time = 0.0
 
-    # ------------------------------------------------------------------
+    
     def _compute_sliced_potentials(self, x0, x1):
         B = x0.shape[0]
         proj_x0 = x0 @ self.proj_dirs.T
@@ -41,7 +41,7 @@ class AmortizedOA_OT:
         Phi = Phi - Phi.mean(dim=0, keepdim=True)
         return Phi
 
-    # ------------------------------------------------------------------
+    
     @staticmethod
     def _g_from_f(f, b, log_K, eps):
         log_b = torch.log(b.clamp(1e-300))
@@ -77,7 +77,7 @@ class AmortizedOA_OT:
         total_sum = (log_P - lp_max).exp().sum() * lp_max.exp()
         return div_a + div_b + eps * (1.0 - total_sum)
 
-    # ------------------------------------------------------------------
+    
     def pretrain(self, source_sampler, target_sampler,
                  M=50, B=512, T=5000):
         print(f"[OA-OT] Pre-training  M={M}  B={B}  T={T}  L={self.L}  eps={self.eps}")
@@ -133,7 +133,7 @@ class AmortizedOA_OT:
         print(f"[OA-OT] Done in {self.pretrain_time:.2f}s")
         return self.alpha
 
-    # ------------------------------------------------------------------
+    
     def predict_plan(self, x0, x1):
         """Predict OT plan for a minibatch."""
         assert self.alpha is not None, "Call pretrain() first."
@@ -167,7 +167,7 @@ class AmortizedOA_OT:
         P /= P.sum(axis=0, keepdims=True) + 1e-30
         return P
 
-    # ------------------------------------------------------------------
+    
     def sample_pairs(self, x0, x1):
         B = x0.shape[0]
         P = self.predict_plan(x0, x1)
