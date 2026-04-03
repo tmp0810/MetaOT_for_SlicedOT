@@ -24,7 +24,7 @@ def _ridge_regression(X, y, ridge=0.0):
 
 
 class AmortizedRA_OT:
-    def __init__(self, L=100, eps=0.1, ridge=1e-3, device="cpu"):
+    def __init__(self, L=100, eps=1, ridge=1e-3, device="cpu"):
         self.L = L
         self.eps = eps
         self.ridge = ridge
@@ -58,16 +58,17 @@ class AmortizedRA_OT:
         B = x0.shape[0]
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
         a, b = ot.unif(B), ot.unif(B)
+        eps = 1
         _, log_d = ot.sinkhorn(
-            a, b, C, reg=self.eps,
-            numItermax=500, stopThr=1e-9, log=True,
+            a, b, C, reg=eps,
+            numItermax=1000, stopThr=1e-9, log=True,
         )
         if 'log_u' in log_d:
-            f = self.eps * log_d['log_u']
+            f = eps * log_d['log_u']
         else:
-            f = self.eps * np.log(np.clip(log_d.get('u', np.ones(B)), 1e-50, None))
+            f = eps * np.log(np.clip(log_d.get('u', np.ones(B)), 1e-50, None))
         f = f - f.mean()
-        return f
+        return f, eps
 
     # ------------------------------------------------------------------
     def pretrain(self, source_sampler, target_sampler, M=50, B=512):
@@ -79,9 +80,12 @@ class AmortizedRA_OT:
             x0 = source_sampler(B).to(dtype=torch.float64, device=self.device)
             x1 = target_sampler(B).to(dtype=torch.float64, device=self.device)
             Phi = self._compute_sliced_potentials(x0, x1).cpu().numpy()
-            f_gt = self._solve_sinkhorn_potential(x0, x1)
+            f_gt, eps_used = self._solve_sinkhorn_potential(x0, x1)
             Phi_list.append(Phi)
             y_list.append(f_gt)
+            # record eps scale for inference
+            if not hasattr(self, '_eps_scale'):
+                self._eps_scale = eps_used
 
         Phi_all = np.vstack(Phi_list)
         y_all   = np.concatenate(y_list)
@@ -98,26 +102,35 @@ class AmortizedRA_OT:
         x1 = x1.to(dtype=torch.float64, device=self.device)
 
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
+        # Use same eps scale as training
+        eps = getattr(self, '_eps_scale',
+                      float(np.median(C) / np.log(B)))
+
         Phi = self._compute_sliced_potentials(x0, x1).cpu().numpy()
         f = (Phi @ self.alpha)
         f = f - f.mean()
+        log_K = -C / eps
+        log_a = np.log(1.0 / B)
+        log_b = np.log(1.0 / B)
+        log_f = f / eps
+        for _ in range(1):
+            # g_j update
+            M_f = log_f[:, None] + log_K              # (B, B)
+            m   = M_f.max(axis=0, keepdims=True)
+            log_g = log_b - (np.log(np.exp(M_f - m).sum(axis=0)) + m.squeeze())
+            # f_i update
+            M_g = log_g[None, :] + log_K              # (B, B)
+            m   = M_g.max(axis=1, keepdims=True)
+            log_f = log_a - (np.log(np.exp(M_g - m).sum(axis=1)) + m.squeeze())
 
-        # One c-transform iteration  g_j = eps*(log b_j − lse_i(f_i/eps − C_ij/eps))
-        log_K = -C / self.eps
-        M_f   = f[:, None] / self.eps + log_K          # (B, B)
-        m_col = M_f.max(axis=0, keepdims=True)
-        g = self.eps * (np.log(1.0 / B)
-                        - (np.log(np.exp(M_f - m_col).sum(axis=0)) + m_col.squeeze()))
-
-        # Build plan  P_ij ∝ exp((f_i + g_j − C_ij)/eps)
-        log_P = f[:, None] / self.eps + g[None, :] / self.eps + log_K
+        log_P = log_f[:, None] + log_g[None, :] + log_K
         log_P -= log_P.max()
         P = np.exp(log_P)
-        # Sinkhorn row-col normalization
-        a_unif = 1.0 / B
-        P *= (a_unif / (P.sum(axis=1, keepdims=True) + 1e-30))
-        P *= (a_unif / (P.sum(axis=0, keepdims=True) + 1e-30))
-        return np.clip(P, 0.0, None)
+        P = np.clip(P, 0.0, None)
+        # Normalise rows then cols once
+        P /= P.sum(axis=1, keepdims=True) + 1e-30
+        P /= P.sum(axis=0, keepdims=True) + 1e-30
+        return P
 
     # ------------------------------------------------------------------
     def sample_pairs(self, x0, x1):
