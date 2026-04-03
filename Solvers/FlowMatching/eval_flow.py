@@ -105,6 +105,7 @@ class ODEWrapper(nn.Module):
         return self.model(torch.cat([x, t_vec], dim=-1))
 
 
+
 def pair_independent(x0, x1):
     return x0, x1
 
@@ -150,16 +151,13 @@ def train_flow(method_name, pair_fn, target_sampler,
 
 
 @torch.no_grad()
-def generate_samples(model, n=10000, n_steps=100, device="cpu"):
-    # node = NeuralODE(
-    #     ODEWrapper(model), solver="dopri5",
-    #     sensitivity="adjoint", atol=1e-4, rtol=1e-4,
-    # ).to(device)
-
-    node = NeuralODE(model_wrapper, solver='rk4', sensitivity='adjoint')
+def generate_samples(model, n=10000, n_steps=101, device="cpu"):
+    node = NeuralODE(
+        ODEWrapper(model), solver="rk4",
+        sensitivity="adjoint", atol=1e-4, rtol=1e-4,
+    ).to(device)
     x0 = sample_gaussian(n).to(device)
-    #t_span = torch.linspace(0, 1, n_steps, device=device)
-    t_span = torch.linspace(0, 1, 101).to(device)
+    t_span = torch.linspace(0, 1, n_steps, device=device)
     traj = node.trajectory(x0, t_span=t_span)        # (T, N, 2)
     return traj                                        # full trajectories
 
@@ -174,9 +172,9 @@ def compute_w2(generated, target_test):
     return float(np.sqrt(max(w2_sq, 0.0)))
 
 
-def compute_npe(model, n=2000, n_steps=100, device="cpu"):
+def compute_npe(model, n=2000, n_steps=101, device="cpu"):
     node = NeuralODE(
-        ODEWrapper(model), solver="dopri5",
+        ODEWrapper(model), solver="rk4",
         sensitivity="adjoint", atol=1e-4, rtol=1e-4,
     ).to(device)
     x0 = sample_gaussian(n).to(device)
