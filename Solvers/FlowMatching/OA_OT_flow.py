@@ -14,7 +14,7 @@ from regression_OT_utils import (
 
 
 class AmortizedOA_OT:
-    def __init__(self, L=100, eps=0.1, lr=1e-3, device="cpu"):
+    def __init__(self, L=100, eps=1, lr=1e-3, device="cpu"):
         self.L = L
         self.eps = eps
         self.lr = lr
@@ -85,15 +85,19 @@ class AmortizedOA_OT:
 
         # ---- collect training data ----
         pool_Phi, pool_a, pool_b, pool_logK = [], [], [], []
+        eps_samples = []
         for _ in tqdm(range(M), desc="OA-OT collect"):
             x0 = source_sampler(B).to(dtype=torch.float64, device=dev)
             x1 = target_sampler(B).to(dtype=torch.float64, device=dev)
             Phi = self._compute_sliced_potentials(x0, x1)
             C   = torch.cdist(x0, x1).pow(2)
+            eps = 1
+            eps_samples.append(eps)
             pool_Phi.append(Phi)
             pool_a.append(torch.full((B,), 1.0/B, dtype=torch.float64, device=dev))
             pool_b.append(torch.full((B,), 1.0/B, dtype=torch.float64, device=dev))
-            pool_logK.append(-C / self.eps)
+            pool_logK.append(-C / eps)
+        self._eps_scale = float(np.median(eps_samples))
 
         # ---- optimise α ----
         alpha = nn.Parameter(torch.zeros(self.L, dtype=torch.float64, device=dev))
@@ -131,30 +135,37 @@ class AmortizedOA_OT:
 
     # ------------------------------------------------------------------
     def predict_plan(self, x0, x1):
-        """Predict OT plan for a minibatch (same logic as RA-OT)."""
+        """Predict OT plan for a minibatch."""
         assert self.alpha is not None, "Call pretrain() first."
         B = x0.shape[0]
         x0 = x0.to(dtype=torch.float64, device=self.device)
         x1 = x1.to(dtype=torch.float64, device=self.device)
 
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
+        eps = getattr(self, '_eps_scale',
+                      float(np.median(C) / np.log(B)))
+
         Phi = self._compute_sliced_potentials(x0, x1).cpu().numpy()
         f = (Phi @ self.alpha)
         f = f - f.mean()
+        log_K = -C / eps
+        log_a = np.log(1.0 / B)
+        log_b = np.log(1.0 / B)
+        log_f = f / eps
+        for _ in range(1):
+            M_f   = log_f[:, None] + log_K
+            m     = M_f.max(axis=0, keepdims=True)
+            log_g = log_b - (np.log(np.exp(M_f - m).sum(axis=0)) + m.squeeze())
+            M_g   = log_g[None, :] + log_K
+            m     = M_g.max(axis=1, keepdims=True)
+            log_f = log_a - (np.log(np.exp(M_g - m).sum(axis=1)) + m.squeeze())
 
-        log_K = -C / self.eps
-        M_f   = f[:, None] / self.eps + log_K
-        m_col = M_f.max(axis=0, keepdims=True)
-        g = self.eps * (np.log(1.0 / B)
-                        - (np.log(np.exp(M_f - m_col).sum(axis=0)) + m_col.squeeze()))
-
-        log_P = f[:, None] / self.eps + g[None, :] / self.eps + log_K
+        log_P = log_f[:, None] + log_g[None, :] + log_K
         log_P -= log_P.max()
-        P = np.exp(log_P)
-        a_unif = 1.0 / B
-        P *= (a_unif / (P.sum(axis=1, keepdims=True) + 1e-30))
-        P *= (a_unif / (P.sum(axis=0, keepdims=True) + 1e-30))
-        return np.clip(P, 0.0, None)
+        P = np.clip(np.exp(log_P), 0.0, None)
+        P /= P.sum(axis=1, keepdims=True) + 1e-30
+        P /= P.sum(axis=0, keepdims=True) + 1e-30
+        return P
 
     # ------------------------------------------------------------------
     def sample_pairs(self, x0, x1):
