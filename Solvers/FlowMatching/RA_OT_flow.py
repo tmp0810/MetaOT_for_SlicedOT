@@ -24,7 +24,7 @@ def _ridge_regression(X, y, ridge=0.0):
 
 
 class AmortizedRA_OT:
-    def __init__(self, L=100, eps=3.5, ridge=1e-3, device="cpu"):
+    def __init__(self, L=100, eps=1, ridge=1e-3, device="cpu"):
         self.L = L
         self.eps = eps
         self.ridge = ridge
@@ -58,7 +58,7 @@ class AmortizedRA_OT:
         B = x0.shape[0]
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
         a, b = ot.unif(B), ot.unif(B)
-        eps=3.5
+        eps=1
         _, log_d = ot.sinkhorn(
             a, b, C, reg=eps,
             numItermax=1000, stopThr=1e-9, log=True,
@@ -102,7 +102,7 @@ class AmortizedRA_OT:
         x1 = x1.to(dtype=torch.float64, device=self.device)
 
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
-        eps=3.5
+        eps=1
 
         Phi = self._compute_sliced_potentials(x0, x1).cpu().numpy()
         f = (Phi @ self.alpha)
