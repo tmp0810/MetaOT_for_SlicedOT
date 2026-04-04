@@ -151,15 +151,14 @@ def train_flow(method_name, pair_fn, target_sampler,
 
 
 @torch.no_grad()
-def generate_samples(model, n=10000, n_steps=101, device="cpu"):
+def generate_samples(model, x0_test, n_steps=101, device="cpu"):
     node = NeuralODE(
         ODEWrapper(model), solver="rk4",
         sensitivity="adjoint"
     ).to(device)
-    x0 = sample_gaussian(n).to(device)
     t_span = torch.linspace(0, 1, n_steps, device=device)
-    traj = node.trajectory(x0, t_span=t_span)        # (T, N, 2)
-    return traj                                        # full trajectories
+    traj = node.trajectory(x0_test, t_span=t_span)        # (T, N, 2)
+    return traj                                       
 
 
 def compute_w2(generated, target_test):
@@ -172,16 +171,16 @@ def compute_w2(generated, target_test):
     return float(np.sqrt(max(w2_sq, 0.0)))
 
 
-def compute_npe(model, n=2000, n_steps=101, device="cpu"):
+def compute_npe(model, x0_test, n_steps=101, device="cpu"):
+    n = x0_test.shape[0]
     node = NeuralODE(
         ODEWrapper(model), solver="rk4",
         sensitivity="adjoint"
     ).to(device)
-    x0 = sample_gaussian(n).to(device)
     t_span = torch.linspace(0, 1, n_steps, device=device)
 
     with torch.no_grad():
-        traj = node.trajectory(x0, t_span=t_span)   # (T, N, 2)
+        traj = node.trajectory(x0_test, t_span=t_span)   # (T, N, 2)
 
     dt = 1.0 / (n_steps - 1)
     pe = 0.0
@@ -193,7 +192,7 @@ def compute_npe(model, n=2000, n_steps=101, device="cpu"):
             pe += (v ** 2).sum(dim=-1).mean().item() * dt
 
     x1_gen = traj[-1]
-    C = ot.dist(x0.cpu().numpy(), x1_gen.cpu().numpy(), metric='sqeuclidean')
+    C = ot.dist(x0_test.cpu().numpy(), x1_gen.cpu().numpy(), metric='sqeuclidean')
     a, b = ot.unif(n), ot.unif(n)
     w2_sq = float(ot.emd2(a, b, C, numItermax=5000000))
     w2_sq = max(w2_sq, 1e-12)
@@ -204,7 +203,8 @@ def compute_npe(model, n=2000, n_steps=101, device="cpu"):
 def main():
     parser = argparse.ArgumentParser()
     #parser.add_argument("--datasets", nargs="+", default=["8gaussians", "moons", "scurve"])
-    parser.add_argument("--datasets", nargs="+", default=["moons"])
+    parser.add_argument("--datasets", nargs="+",
+                        default=["moons"])
     parser.add_argument("--n_steps",  type=int, default=20000)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--L",        type=int, default=100)
@@ -214,7 +214,16 @@ def main():
     parser.add_argument("--sigma",    type=float, default=0.1)
     parser.add_argument("--device",   type=str, default="cpu")
     parser.add_argument("--outdir",   type=str, default="./results_flow")
+    parser.add_argument("--seed",     type=int, default=42)
     args = parser.parse_args()
+
+    # Cố định Seed tuyệt đối
+    import random
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     os.makedirs(args.outdir, exist_ok=True)
     dev = torch.device(args.device)
@@ -225,21 +234,25 @@ def main():
         print(f"  Dataset: Gaussian → {ds_name}")
         print(f"{'='*60}")
         target_sampler = TARGET_SAMPLERS[ds_name]
+        
         target_test = target_sampler(10000).to(dev)
+        x0_test = sample_gaussian(10000).to(dev)        
+        x0_npe_test = sample_gaussian(2000).to(dev)      
+        
         results[ds_name] = {}
 
-        # ---------- I-CFM ----------
-        model_icfm, t_icfm = train_flow(
-            "I-CFM", pair_independent, target_sampler,
-            n_steps=args.n_steps, batch_size=args.batch_size,
-            sigma=args.sigma, device=dev,
-        )
-        traj_icfm = generate_samples(model_icfm, device=dev)
-        w2_icfm  = compute_w2(traj_icfm[-1], target_test)
-        npe_icfm, _, _ = compute_npe(model_icfm, device=dev)
-        results[ds_name]["I-CFM"] = dict(W2=w2_icfm, NPE=npe_icfm,
-                                         train_time=t_icfm, pretrain_time=0.0)
-        print(f"[I-CFM]   W2={w2_icfm:.4f}  NPE={npe_icfm:.4f}  time={t_icfm:.1f}s")
+        # # ---------- I-CFM ----------
+        # model_icfm, t_icfm = train_flow(
+        #     "I-CFM", pair_independent, target_sampler,
+        #     n_steps=args.n_steps, batch_size=args.batch_size,
+        #     sigma=args.sigma, device=dev,
+        # )
+        # traj_icfm = generate_samples(model_icfm, x0_test, device=dev)
+        # w2_icfm  = compute_w2(traj_icfm[-1], target_test)
+        # npe_icfm, _, _ = compute_npe(model_icfm, x0_npe_test, device=dev)
+        # results[ds_name]["I-CFM"] = dict(W2=w2_icfm, NPE=npe_icfm,
+        #                                  train_time=t_icfm, pretrain_time=0.0)
+        # print(f"[I-CFM]   W2={w2_icfm:.4f}  NPE={npe_icfm:.4f}  time={t_icfm:.1f}s")
 
         # ---------- OT-CFM ----------
         model_ot, t_ot = train_flow(
@@ -247,9 +260,9 @@ def main():
             n_steps=args.n_steps, batch_size=args.batch_size,
             sigma=args.sigma, device=dev,
         )
-        traj_ot = generate_samples(model_ot, device=dev)
+        traj_ot = generate_samples(model_ot, x0_test, device=dev)
         w2_ot  = compute_w2(traj_ot[-1], target_test)
-        npe_ot, _, _ = compute_npe(model_ot, device=dev)
+        npe_ot, _, _ = compute_npe(model_ot, x0_npe_test, device=dev)
         results[ds_name]["OT-CFM"] = dict(W2=w2_ot, NPE=npe_ot,
                                            train_time=t_ot, pretrain_time=0.0)
         print(f"[OT-CFM]  W2={w2_ot:.4f}  NPE={npe_ot:.4f}  time={t_ot:.1f}s")
@@ -267,37 +280,37 @@ def main():
             n_steps=args.n_steps, batch_size=args.batch_size,
             sigma=args.sigma, device=dev,
         )
-        traj_ra = generate_samples(model_ra, device=dev)
+        traj_ra = generate_samples(model_ra, x0_test, device=dev)
         w2_ra  = compute_w2(traj_ra[-1], target_test)
-        npe_ra, _, _ = compute_npe(model_ra, device=dev)
+        npe_ra, _, _ = compute_npe(model_ra, x0_npe_test, device=dev)
         results[ds_name]["RA-OT-FM"] = dict(
             W2=w2_ra, NPE=npe_ra,
             train_time=t_ra, pretrain_time=ra_ot.pretrain_time)
         print(f"[RA-OT]   W2={w2_ra:.4f}  NPE={npe_ra:.4f}  "
               f"time={t_ra:.1f}s  pretrain={ra_ot.pretrain_time:.1f}s")
 
-        # ---------- OA-OT-FM ----------
-        oa_ot = AmortizedOA_OT(L=args.L, eps=args.eps, lr=1e-3, device=dev)
-        oa_ot.pretrain(sample_gaussian, target_sampler,
-                       M=args.M_pretrain, B=args.batch_size,
-                       T=args.T_pretrain)
+        # # ---------- OA-OT-FM ----------
+        # oa_ot = AmortizedOA_OT(L=args.L, eps=args.eps, lr=1e-3, device=dev)
+        # oa_ot.pretrain(sample_gaussian, target_sampler,
+        #                M=args.M_pretrain, B=args.batch_size,
+        #                T=args.T_pretrain)
 
-        def pair_oa_ot(x0, x1):
-            return oa_ot.sample_pairs(x0, x1)
+        # def pair_oa_ot(x0, x1):
+        #     return oa_ot.sample_pairs(x0, x1)
 
-        model_oa, t_oa = train_flow(
-            "OA-OT-FM", pair_oa_ot, target_sampler,
-            n_steps=args.n_steps, batch_size=args.batch_size,
-            sigma=args.sigma, device=dev,
-        )
-        traj_oa = generate_samples(model_oa, device=dev)
-        w2_oa  = compute_w2(traj_oa[-1], target_test)
-        npe_oa, _, _ = compute_npe(model_oa, device=dev)
-        results[ds_name]["OA-OT-FM"] = dict(
-            W2=w2_oa, NPE=npe_oa,
-            train_time=t_oa, pretrain_time=oa_ot.pretrain_time)
-        print(f"[OA-OT]   W2={w2_oa:.4f}  NPE={npe_oa:.4f}  "
-              f"time={t_oa:.1f}s  pretrain={oa_ot.pretrain_time:.1f}s")
+        # model_oa, t_oa = train_flow(
+        #     "OA-OT-FM", pair_oa_ot, target_sampler,
+        #     n_steps=args.n_steps, batch_size=args.batch_size,
+        #     sigma=args.sigma, device=dev,
+        # )
+        # traj_oa = generate_samples(model_oa, x0_test, device=dev)
+        # w2_oa  = compute_w2(traj_oa[-1], target_test)
+        # npe_oa, _, _ = compute_npe(model_oa, x0_npe_test, device=dev)
+        # results[ds_name]["OA-OT-FM"] = dict(
+        #     W2=w2_oa, NPE=npe_oa,
+        #     train_time=t_oa, pretrain_time=oa_ot.pretrain_time)
+        # print(f"[OA-OT]   W2={w2_oa:.4f}  NPE={npe_oa:.4f}  "
+        #       f"time={t_oa:.1f}s  pretrain={oa_ot.pretrain_time:.1f}s")
 
         # ---------- save trajectories for plotting ----------
         for name, traj in [("I-CFM", traj_icfm), ("OT-CFM", traj_ot),
