@@ -14,7 +14,7 @@ from regression_OT_utils import (
 
 
 class AmortizedOA_OT:
-    def __init__(self, L=100, eps=3, lr=1e-3, device="cpu"):
+    def __init__(self, L=100, eps=2, lr=1e-3, device="cpu"):
         self.L = L
         self.eps = eps
         self.lr = lr
@@ -91,7 +91,7 @@ class AmortizedOA_OT:
             x1 = target_sampler(B).to(dtype=torch.float64, device=dev)
             Phi = self._compute_sliced_potentials(x0, x1)
             C   = torch.cdist(x0, x1).pow(2)
-            eps=3
+            eps=2
             eps_samples.append(eps)
             pool_Phi.append(Phi)
             pool_a.append(torch.full((B,), 1.0/B, dtype=torch.float64, device=dev))
@@ -142,7 +142,7 @@ class AmortizedOA_OT:
         x1 = x1.to(dtype=torch.float64, device=self.device)
 
         C = torch.cdist(x0, x1).pow(2).cpu().numpy()
-        eps=3
+        eps=2
 
         Phi = self._compute_sliced_potentials(x0, x1).cpu().numpy()
         f = (Phi @ self.alpha)
