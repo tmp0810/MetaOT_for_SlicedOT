@@ -24,7 +24,7 @@ def _ridge_regression(X, y, ridge=0.0):
 
 
 class AmortizedRA_OT:
-    def __init__(self, L=100, , ridge=1e-3, device="cpu"):
+    def __init__(self, L=100, eps=2, ridge=1e-3, device="cpu"):
         self.L = L
         self.eps = eps
         self.ridge = ridge
