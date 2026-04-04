@@ -204,7 +204,7 @@ def main():
     parser = argparse.ArgumentParser()
     #parser.add_argument("--datasets", nargs="+", default=["8gaussians", "moons", "scurve"])
     parser.add_argument("--datasets", nargs="+",
-                        default=["moons"])
+                        default=["8gaussians"])
     parser.add_argument("--n_steps",  type=int, default=20000)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--L",        type=int, default=100)
@@ -240,18 +240,18 @@ def main():
         
         results[ds_name] = {}
 
-        # # ---------- I-CFM ----------
-        # model_icfm, t_icfm = train_flow(
-        #     "I-CFM", pair_independent, target_sampler,
-        #     n_steps=args.n_steps, batch_size=args.batch_size,
-        #     sigma=args.sigma, device=dev,
-        # )
-        # traj_icfm = generate_samples(model_icfm, x0_test, device=dev)
-        # w2_icfm  = compute_w2(traj_icfm[-1], target_test)
-        # npe_icfm, _, _ = compute_npe(model_icfm, x0_npe_test, device=dev)
-        # results[ds_name]["I-CFM"] = dict(W2=w2_icfm, NPE=npe_icfm,
-        #                                  train_time=t_icfm, pretrain_time=0.0)
-        # print(f"[I-CFM]   W2={w2_icfm:.4f}  NPE={npe_icfm:.4f}  time={t_icfm:.1f}s")
+        # ---------- I-CFM ----------
+        model_icfm, t_icfm = train_flow(
+            "I-CFM", pair_independent, target_sampler,
+            n_steps=args.n_steps, batch_size=args.batch_size,
+            sigma=args.sigma, device=dev,
+        )
+        traj_icfm = generate_samples(model_icfm, x0_test, device=dev)
+        w2_icfm  = compute_w2(traj_icfm[-1], target_test)
+        npe_icfm, _, _ = compute_npe(model_icfm, x0_npe_test, device=dev)
+        results[ds_name]["I-CFM"] = dict(W2=w2_icfm, NPE=npe_icfm,
+                                         train_time=t_icfm, pretrain_time=0.0)
+        print(f"[I-CFM]   W2={w2_icfm:.4f}  NPE={npe_icfm:.4f}  time={t_icfm:.1f}s")
 
         # ---------- OT-CFM ----------
         model_ot, t_ot = train_flow(
@@ -288,28 +288,28 @@ def main():
         print(f"[RA-OT]   W2={w2_ra:.4f}  NPE={npe_ra:.4f}  "
               f"time={t_ra:.1f}s  pretrain={ra_ot.pretrain_time:.1f}s")
 
-        # # ---------- OA-OT-FM ----------
-        # oa_ot = AmortizedOA_OT(L=args.L, eps=args.eps, lr=1e-3, device=dev)
-        # oa_ot.pretrain(sample_gaussian, target_sampler,
-        #                M=args.M_pretrain, B=args.batch_size,
-        #                T=args.T_pretrain)
+        # ---------- OA-OT-FM ----------
+        oa_ot = AmortizedOA_OT(L=args.L, eps=args.eps, lr=1e-3, device=dev)
+        oa_ot.pretrain(sample_gaussian, target_sampler,
+                       M=args.M_pretrain, B=args.batch_size,
+                       T=args.T_pretrain)
 
-        # def pair_oa_ot(x0, x1):
-        #     return oa_ot.sample_pairs(x0, x1)
+        def pair_oa_ot(x0, x1):
+            return oa_ot.sample_pairs(x0, x1)
 
-        # model_oa, t_oa = train_flow(
-        #     "OA-OT-FM", pair_oa_ot, target_sampler,
-        #     n_steps=args.n_steps, batch_size=args.batch_size,
-        #     sigma=args.sigma, device=dev,
-        # )
-        # traj_oa = generate_samples(model_oa, x0_test, device=dev)
-        # w2_oa  = compute_w2(traj_oa[-1], target_test)
-        # npe_oa, _, _ = compute_npe(model_oa, x0_npe_test, device=dev)
-        # results[ds_name]["OA-OT-FM"] = dict(
-        #     W2=w2_oa, NPE=npe_oa,
-        #     train_time=t_oa, pretrain_time=oa_ot.pretrain_time)
-        # print(f"[OA-OT]   W2={w2_oa:.4f}  NPE={npe_oa:.4f}  "
-        #       f"time={t_oa:.1f}s  pretrain={oa_ot.pretrain_time:.1f}s")
+        model_oa, t_oa = train_flow(
+            "OA-OT-FM", pair_oa_ot, target_sampler,
+            n_steps=args.n_steps, batch_size=args.batch_size,
+            sigma=args.sigma, device=dev,
+        )
+        traj_oa = generate_samples(model_oa, x0_test, device=dev)
+        w2_oa  = compute_w2(traj_oa[-1], target_test)
+        npe_oa, _, _ = compute_npe(model_oa, x0_npe_test, device=dev)
+        results[ds_name]["OA-OT-FM"] = dict(
+            W2=w2_oa, NPE=npe_oa,
+            train_time=t_oa, pretrain_time=oa_ot.pretrain_time)
+        print(f"[OA-OT]   W2={w2_oa:.4f}  NPE={npe_oa:.4f}  "
+              f"time={t_oa:.1f}s  pretrain={oa_ot.pretrain_time:.1f}s")
 
         # ---------- save trajectories for plotting ----------
         for name, traj in [("I-CFM", traj_icfm), ("OT-CFM", traj_ot),
