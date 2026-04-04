@@ -217,13 +217,12 @@ def main():
     parser.add_argument("--seed",     type=int, default=42)
     args = parser.parse_args()
 
-    # Cố định Seed tuyệt đối
     import random
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+        torch.cuda.manual_seed_all(42)
 
     os.makedirs(args.outdir, exist_ok=True)
     dev = torch.device(args.device)
