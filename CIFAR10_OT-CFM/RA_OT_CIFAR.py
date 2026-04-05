@@ -1,25 +1,3 @@
-"""
-RA-OT (Regression-Amortized Optimal Transport) for CIFAR-10.
-
-Phase 1 — Pre-training:
-    For M mini-batches of (x0~N(0,I), x1~CIFAR-10):
-        1. Flatten images to (B, D) with D = 3*32*32 = 3072.
-        2. Compute sliced Wasserstein potentials Phi (B, L) via emd1D_dual
-           along L random directions on the unit sphere in R^D.
-        3. Solve exact Sinkhorn to obtain the ground-truth potential f_gt (B,).
-        4. Stack all (Phi, f_gt) pairs and fit a ridge regression:
-               alpha = argmin_alpha ||Phi @ alpha - f_gt||^2 + lambda*||alpha||^2
-
-Phase 2 — Fast inference (called at *every* U-Net training step):
-    Given a new (x0, x1) mini-batch:
-        1. Compute Phi -> f_pred = Phi @ alpha   (O(B*L) — extremely fast)
-        2. Perform 1 Sinkhorn iteration to refine dual potentials (f, g).
-        3. Build transport plan P = exp((f+g-C)/eps).
-        4. Sample B paired indices (i,j) ~ P   => return x0[i], x1[j].
-
-All heavy-lifting (OT on 3072-d data) is replaced by L cheap 1-D EMDs.
-"""
-
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,7 +15,6 @@ from regression_OT_utils import (
 
 
 def _ridge_regression(X, y, ridge=0.0):
-    """Closed-form ridge regression: alpha = (X^T X + lam I)^{-1} X^T y."""
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64).ravel()
     H = X.T @ X
@@ -47,17 +24,6 @@ def _ridge_regression(X, y, ridge=0.0):
 
 
 class AmortizedRA_OT_CIFAR:
-    """
-    RA-OT amortized solver for CIFAR-10.
-
-    Parameters
-    ----------
-    L       : int   — number of random 1-D projection directions.
-    eps     : float — Sinkhorn regularisation (used for both labelling & inference).
-    ridge   : float — L2 penalty for ridge regression.
-    device  : str   — torch device for sliced-potential computation.
-    """
-
     def __init__(self, L: int = 100, eps: float = 0.1,
                  ridge: float = 1e-3, device: str = "cpu"):
         self.L = L
@@ -66,7 +32,6 @@ class AmortizedRA_OT_CIFAR:
         self.device = device
         self.dim = 3 * 32 * 32          # CIFAR-10 flattened dimension
 
-        # Fixed random projection directions on the unit sphere in R^{dim}
         self.proj_dirs = generate_uniform_unit_sphere_projections(
             dim=self.dim,
             num_projections=L,
@@ -76,28 +41,13 @@ class AmortizedRA_OT_CIFAR:
 
         self.alpha = None
         self.pretrain_time = 0.0
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
+                     
     def _flatten(self, x: torch.Tensor) -> torch.Tensor:
         """(B, C, H, W) -> (B, D) in float64."""
         return x.reshape(x.shape[0], -1).to(dtype=torch.float64, device=self.device)
 
     def _compute_sliced_potentials(self, x0_flat: torch.Tensor,
                                    x1_flat: torch.Tensor) -> torch.Tensor:
-        """
-        Compute sliced Wasserstein dual potentials as feature matrix Phi.
-
-        Parameters
-        ----------
-        x0_flat, x1_flat : (B, D) float64 tensors (already on self.device)
-
-        Returns
-        -------
-        Phi : (B, L) float64  — mean-centred per-direction potentials for x0.
-        """
         B = x0_flat.shape[0]
         # Project: (B, D) x (D, L) -> (B, L) -> transpose -> (L, B)
         proj_x0 = (x0_flat @ self.proj_dirs.T).T   # (L, B)
@@ -118,10 +68,6 @@ class AmortizedRA_OT_CIFAR:
 
     def _sinkhorn_potential(self, x0_flat: torch.Tensor,
                             x1_flat: torch.Tensor):
-        """
-        Solve Sinkhorn on the flattened pair to get ground-truth f potential.
-        Returns (f_gt: np.ndarray (B,), eps_used: float).
-        """
         B = x0_flat.shape[0]
         C = torch.cdist(x0_flat, x1_flat).pow(2).cpu().numpy()
         a, b = ot.unif(B), ot.unif(B)
@@ -137,23 +83,7 @@ class AmortizedRA_OT_CIFAR:
         f = f - f.mean()
         return f, self.eps
 
-    # ------------------------------------------------------------------
-    # Phase 1: pre-training
-    # ------------------------------------------------------------------
-
     def pretrain(self, source_sampler, target_sampler, M: int = 50, B: int = 128):
-        """
-        Collect M (x0, x1) mini-batches and fit ridge regression.
-
-        Parameters
-        ----------
-        source_sampler : callable(B) -> Tensor (B, C, H, W) or (B, D)
-            Samples from N(0, I).  For CIFAR, pass torch.randn_like(x1).
-        target_sampler : callable(B) -> Tensor (B, C, H, W)
-            Samples real CIFAR-10 images (normalised to [-1, 1]).
-        M  : int — number of mini-batches to collect.
-        B  : int — mini-batch size.
-        """
         print(f"[RA-OT CIFAR] Pre-training  M={M}  B={B}  L={self.L}  "
               f"eps={self.eps}  ridge={self.ridge}  dim={self.dim}")
 
@@ -189,23 +119,7 @@ class AmortizedRA_OT_CIFAR:
         print(f"[RA-OT CIFAR] Pre-training total: {self.pretrain_time:.2f}s")
         return self.alpha
 
-    # ------------------------------------------------------------------
-    # Phase 2: fast inference
-    # ------------------------------------------------------------------
-
     def predict_plan(self, x0: torch.Tensor, x1: torch.Tensor) -> np.ndarray:
-        """
-        Predict the OT transport plan for a mini-batch.
-
-        Parameters
-        ----------
-        x0 : Tensor (B, 3, 32, 32) — noise samples
-        x1 : Tensor (B, 3, 32, 32) — CIFAR-10 images
-
-        Returns
-        -------
-        P  : np.ndarray (B, B) — row/column-normalised transport plan.
-        """
         assert self.alpha is not None, "Call pretrain() first."
         B = x0.shape[0]
 
@@ -243,11 +157,6 @@ class AmortizedRA_OT_CIFAR:
 
     def sample_pairs(self, x0: torch.Tensor,
                      x1: torch.Tensor):
-        """
-        Sample B paired (x0_i, x1_j) from the predicted OT plan.
-
-        Returns tensors with the *original* shape (B, 3, 32, 32).
-        """
         B = x0.shape[0]
         P = self.predict_plan(x0, x1)
         P_flat = P.ravel()
