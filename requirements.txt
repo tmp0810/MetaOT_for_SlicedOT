@@ -9,5 +9,3 @@ tqdm>=4.65.0
 rasterio
 torchdyn
 torchcfm
-absl
-copy
