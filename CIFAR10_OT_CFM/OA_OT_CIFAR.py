@@ -17,12 +17,11 @@ class AmortizedOA_OT_CIFAR:
     def __init__(self, L: int = 100, eps: float = 0.1,
                  lr: float = 1e-3, device: str = "cpu"):
         self.L = L
-        self.eps = eps
+        self.eps = eps       
         self.lr = lr
         self.device = device
-        self.dim = 3 * 32 * 32          # CIFAR-10 flattened dimension
+        self.dim = 3 * 32 * 32          
 
-        # Fixed random projection directions on the unit sphere in R^{dim}
         self.proj_dirs = generate_uniform_unit_sphere_projections(
             dim=self.dim,
             num_projections=L,
@@ -39,26 +38,27 @@ class AmortizedOA_OT_CIFAR:
     def _compute_sliced_potentials(self, x0_flat: torch.Tensor,
                                    x1_flat: torch.Tensor) -> torch.Tensor:
         B = x0_flat.shape[0]
-        proj_x0 = (x0_flat @ self.proj_dirs.T).T   # (L, B)
-        proj_x1 = (x1_flat @ self.proj_dirs.T).T   # (L, B)
+        # NOTE: emd1D_dual is numpy/scipy-based → requires CPU tensors.
+        # Matrix multiply on GPU (fast), then move to CPU before emd1D_dual.
+        proj_x0 = (x0_flat @ self.proj_dirs.T).T.cpu()   # (L, B) on CPU
+        proj_x1 = (x1_flat @ self.proj_dirs.T).T.cpu()   # (L, B) on CPU
 
-        a = torch.full((B,), 1.0 / B, dtype=torch.float64, device=self.device)
-        b = torch.full((B,), 1.0 / B, dtype=torch.float64, device=self.device)
+        a = torch.full((B,), 1.0 / B, dtype=torch.float64, device="cpu")
+        b = torch.full((B,), 1.0 / B, dtype=torch.float64, device="cpu")
 
         f_grad, _, _ = emd1D_dual(
             proj_x0, proj_x1,
             u_weights=a, v_weights=b,
             p=2, require_sort=True,
-        )  # f_grad: (L, B)
+        )  # f_grad: (L, B) on CPU
 
-        Phi = f_grad.T                                  # (B, L)
+        Phi = f_grad.T                                  # (B, L) on CPU
         Phi = Phi - Phi.mean(dim=0, keepdim=True)
-        return Phi
-                                       
+        return Phi   # always on CPU
+
     @staticmethod
     def _g_from_f(f: torch.Tensor, b: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
-        """Compute g = C-transform of f: g_j = eps*(log b_j - LSE_i(f_i/eps + log K_ij))"""
         log_b = torch.log(b.clamp(1e-300))
         M = log_K + f.unsqueeze(1) / eps           # (B, B)
         m = M.max(dim=0, keepdim=True).values
@@ -68,7 +68,6 @@ class AmortizedOA_OT_CIFAR:
     @staticmethod
     def _f_from_g(g: torch.Tensor, a: torch.Tensor,
                   log_K: torch.Tensor, eps: float) -> torch.Tensor:
-        """Compute f = C-transform of g."""
         log_a = torch.log(a.clamp(1e-300))
         M = log_K + g.unsqueeze(0) / eps           # (B, B)
         m = M.max(dim=1, keepdim=True).values
@@ -78,11 +77,6 @@ class AmortizedOA_OT_CIFAR:
     def _dual_objective(self, a: torch.Tensor, b: torch.Tensor,
                         f: torch.Tensor, log_K: torch.Tensor,
                         eps: float) -> torch.Tensor:
-        """
-        Sinkhorn KL dual objective (to be maximised):
-            D(f) = <a, f-fa> + <b, g-gb> + eps*(1 - sum P)
-        where fa = C-transform of g(f), gb = C-transform of f.
-        """
         g = self._g_from_f(f, b, log_K, eps)
 
         M_fa = log_K + g.unsqueeze(0) / eps
@@ -101,15 +95,15 @@ class AmortizedOA_OT_CIFAR:
         total_sum = (log_P - lp_max).exp().sum() * lp_max.exp()
 
         return div_a + div_b + eps * (1.0 - total_sum)
-                            
+
     def pretrain(self, source_sampler, target_sampler,
                  M: int = 50, B: int = 128, T: int = 5000):
         print(f"[OA-OT CIFAR] Pre-training  M={M}  B={B}  T={T}  "
-              f"L={self.L}  eps={self.eps}  dim={self.dim}")
+              f"L={self.L}  adaptive_eps=median(C)/log(B)  dim={self.dim}")
         dev = self.device
 
         # ---- collect training pool ----
-        pool_Phi, pool_a, pool_b, pool_logK = [], [], [], []
+        pool_Phi, pool_a, pool_b, pool_logK, pool_eps = [], [], [], [], []
 
         for _ in tqdm(range(M), desc="OA-OT collect"):
             x1 = target_sampler(B)
@@ -118,11 +112,15 @@ class AmortizedOA_OT_CIFAR:
             x0_flat = self._flatten(x0)
             x1_flat = self._flatten(x1)
 
-            Phi = self._compute_sliced_potentials(x0_flat, x1_flat)  # (B, L)
-            C = torch.cdist(x0_flat, x1_flat).pow(2)                  # (B, B)
+            Phi = self._compute_sliced_potentials(x0_flat, x1_flat)  # (B, L) on CPU
+            C = torch.cdist(x0_flat, x1_flat).pow(2)                  # (B, B) on device
 
-            pool_Phi.append(Phi)
-            pool_logK.append(-C / self.eps)
+            c_med = float(torch.median(C).item())
+            eps_i = c_med / np.log(B)
+
+            pool_Phi.append(Phi.to(device=dev))          
+            pool_logK.append((-C / eps_i).to(dev))       
+            pool_eps.append(eps_i)
             pool_a.append(torch.full((B,), 1.0 / B, dtype=torch.float64, device=dev))
             pool_b.append(torch.full((B,), 1.0 / B, dtype=torch.float64, device=dev))
 
@@ -142,7 +140,7 @@ class AmortizedOA_OT_CIFAR:
             f_pred = pool_Phi[idx] @ alpha                  # (B,)
             loss = -self._dual_objective(
                 pool_a[idx], pool_b[idx],
-                f_pred, pool_logK[idx], self.eps,
+                f_pred, pool_logK[idx], pool_eps[idx],      # per-batch adaptive eps
             )
             opt.zero_grad()
             loss.backward()
@@ -159,6 +157,8 @@ class AmortizedOA_OT_CIFAR:
         pbar.close()
 
         self.alpha = alpha.detach().cpu().numpy()
+        print(f"[OA-OT CIFAR]   |  "
+              f"alpha norm={np.linalg.norm(self.alpha):.6f}")
         self.pretrain_time = time.time() - t0
         print(f"[OA-OT CIFAR] Pre-training total: {self.pretrain_time:.2f}s")
         return self.alpha
@@ -170,16 +170,21 @@ class AmortizedOA_OT_CIFAR:
         x0_flat = self._flatten(x0)
         x1_flat = self._flatten(x1)
 
-        # Amortised prediction
-        Phi = self._compute_sliced_potentials(x0_flat, x1_flat).cpu().numpy()
+        # Amortised prediction (Phi on CPU)
+        Phi = self._compute_sliced_potentials(x0_flat, x1_flat).numpy()
         f = Phi @ self.alpha
         f = f - f.mean()
 
         C = torch.cdist(x0_flat, x1_flat).pow(2).cpu().numpy()
-        log_K = -C / self.eps
+
+        # Adaptive eps: same formula as pretrain
+        c_med = float(np.median(C))
+        eps = c_med / np.log(B)
+
+        log_K = -C / eps
         log_a = np.log(1.0 / B)
         log_b = np.log(1.0 / B)
-        log_f = f / self.eps
+        log_f = f / eps
 
         # 1 Sinkhorn refinement step
         M_f = log_f[:, None] + log_K
