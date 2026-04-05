@@ -11,7 +11,7 @@ import torch
 from absl import app, flags
 from torchvision import datasets, transforms
 from tqdm import trange
-from CIFAR10_OT-CFM.utils_cifar import ema, generate_samples, infiniteloop
+from CIFAR10_OT_CFM.utils_cifar import ema, generate_samples, infiniteloop
 
 from torchcfm.conditional_flow_matching import (
     ConditionalFlowMatcher,
@@ -22,8 +22,8 @@ from torchcfm.conditional_flow_matching import (
 from torchcfm.models.unet.unet import UNetModelWrapper
 
 # ── Our amortised solvers ────────────────────────────────────────────────────
-from CIFAR10_OT-CFM.RA_OT_CIFAR import AmortizedRA_OT_CIFAR
-from CIFAR10_OT-CFM.OA_OT_CIFAR import AmortizedOA_OT_CIFAR
+from CIFAR10_OT_CFM.RA_OT_CIFAR import AmortizedRA_OT_CIFAR
+from CIFAR10_OT_CFM.OA_OT_CIFAR import AmortizedOA_OT_CIFAR
 # ─────────────────────────────────────────────────────────────────────────────
 
 FLAGS = flags.FLAGS
