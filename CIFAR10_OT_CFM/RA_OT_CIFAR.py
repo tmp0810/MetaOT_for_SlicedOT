@@ -49,39 +49,43 @@ class AmortizedRA_OT_CIFAR:
     def _compute_sliced_potentials(self, x0_flat: torch.Tensor,
                                    x1_flat: torch.Tensor) -> torch.Tensor:
         B = x0_flat.shape[0]
-        # Project: (B, D) x (D, L) -> (B, L) -> transpose -> (L, B)
-        proj_x0 = (x0_flat @ self.proj_dirs.T).T   # (L, B)
-        proj_x1 = (x1_flat @ self.proj_dirs.T).T   # (L, B)
 
-        a = torch.full((B,), 1.0 / B, dtype=torch.float64, device=self.device)
-        b = torch.full((B,), 1.0 / B, dtype=torch.float64, device=self.device)
+        proj_x0 = (x0_flat @ self.proj_dirs.T).T.cpu()   # (L, B) on CPU
+        proj_x1 = (x1_flat @ self.proj_dirs.T).T.cpu()   # (L, B) on CPU
+
+        a = torch.full((B,), 1.0 / B, dtype=torch.float64, device="cpu")
+        b = torch.full((B,), 1.0 / B, dtype=torch.float64, device="cpu")
 
         f_grad, _, _ = emd1D_dual(
             proj_x0, proj_x1,
             u_weights=a, v_weights=b,
             p=2, require_sort=True,
-        )  # f_grad: (L, B)
+        )  
 
-        Phi = f_grad.T                                          # (B, L)
-        Phi = Phi - Phi.mean(dim=0, keepdim=True)              # mean-centre cols
-        return Phi
+        Phi = f_grad.T                                          
+        Phi = Phi - Phi.mean(dim=0, keepdim=True)              
+        return Phi   
 
     def _sinkhorn_potential(self, x0_flat: torch.Tensor,
                             x1_flat: torch.Tensor):
         B = x0_flat.shape[0]
         C = torch.cdist(x0_flat, x1_flat).pow(2).cpu().numpy()
+
+        c_med = float(np.median(C))
+        eps = c_med / np.log(B)
+
         a, b = ot.unif(B), ot.unif(B)
         _, log_d = ot.sinkhorn(
-            a, b, C, reg=self.eps,
+            a, b, C, reg=eps,
             numItermax=1000, stopThr=1e-9, log=True,
         )
         if "log_u" in log_d:
-            f = self.eps * log_d["log_u"]
+            f = eps * log_d["log_u"]
         else:
             u = log_d.get("u", np.ones(B))
-            f = self.eps * np.log(np.clip(u, 1e-50, None))
+            f = eps * np.log(np.clip(u, 1e-50, None))
         f = f - f.mean()
-        return f, self.eps
+        return f, eps
 
     def pretrain(self, source_sampler, target_sampler, M: int = 50, B: int = 128):
         print(f"[RA-OT CIFAR] Pre-training  M={M}  B={B}  L={self.L}  "
@@ -113,7 +117,7 @@ class AmortizedRA_OT_CIFAR:
         t_reg = time.time()
         self.alpha = _ridge_regression(Phi_all, y_all, self.ridge)
         print(f"[RA-OT CIFAR] Ridge done in {time.time()-t_reg:.2f}s  |  "
-              f"alpha norm={np.linalg.norm(self.alpha):.4f}")
+              f"alpha norm={np.linalg.norm(self.alpha):.6f}")
 
         self.pretrain_time = time.time() - t0
         print(f"[RA-OT CIFAR] Pre-training total: {self.pretrain_time:.2f}s")
@@ -126,19 +130,19 @@ class AmortizedRA_OT_CIFAR:
         x0_flat = self._flatten(x0)     # (B, D)
         x1_flat = self._flatten(x1)     # (B, D)
 
-        # Amortised potential prediction
-        Phi = self._compute_sliced_potentials(x0_flat, x1_flat).cpu().numpy()
+        Phi = self._compute_sliced_potentials(x0_flat, x1_flat).numpy()
         f = Phi @ self.alpha            # (B,)
         f = f - f.mean()
 
-        # Cost & log-kernel
         C = torch.cdist(x0_flat, x1_flat).pow(2).cpu().numpy()
-        log_K = -C / self.eps
+        c_med = float(np.median(C))
+        eps = c_med / np.log(B)
+
+        log_K = -C / eps
         log_a = np.log(1.0 / B)
         log_b = np.log(1.0 / B)
-        log_f = f / self.eps
+        log_f = f / eps
 
-        # 1 Sinkhorn iteration (warm-start from predicted f)
         M_f = log_f[:, None] + log_K                     # (B, B)
         m = M_f.max(axis=0, keepdims=True)
         log_g = log_b - (np.log(np.exp(M_f - m).sum(axis=0)) + m.squeeze())
@@ -150,9 +154,9 @@ class AmortizedRA_OT_CIFAR:
         log_P -= log_P.max()
         P = np.exp(log_P)
         P = np.clip(P, 0.0, None)
-        # Normalise rows then cols once
         P /= P.sum(axis=1, keepdims=True) + 1e-30
         P /= P.sum(axis=0, keepdims=True) + 1e-30
+
         return P
 
     def sample_pairs(self, x0: torch.Tensor,
