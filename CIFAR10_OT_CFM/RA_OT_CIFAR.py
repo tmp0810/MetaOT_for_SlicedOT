@@ -23,7 +23,7 @@ def _ridge_regression(X, y, ridge=0.0):
 
 
 class AmortizedRA_OT_CIFAR:
-    def __init__(self, L: int = 100, eps: float = 0.1,
+    def __init__(self, L: int = 100, eps: float = 800.0,
                  ridge: float = 1e-3, device: str = "cpu"):
         self.L = L
         self.eps = eps
@@ -101,11 +101,9 @@ class AmortizedRA_OT_CIFAR:
 
     def _sinkhorn_potential(self, x0_flat: torch.Tensor,
                             x1_flat: torch.Tensor):
-        B = x0_flat.shape[0]
-        C = torch.cdist(x0_flat, x1_flat).pow(2).cpu().numpy()
-
-        c_med = float(np.median(C))
-        eps = c_med / np.log(B)
+        B   = x0_flat.shape[0]
+        eps = self.eps                                   # fixed eps
+        C   = torch.cdist(x0_flat, x1_flat).pow(2).cpu().numpy()
 
         a, b = ot.unif(B), ot.unif(B)
         _, log_d = ot.sinkhorn(
@@ -183,10 +181,9 @@ class AmortizedRA_OT_CIFAR:
         f = (Phi @ alpha_t).to(device=dev)                                # (B,) GPU f32
         f = f - f.mean()
 
-        # ── 4. Cost matrix on GPU float32  ← was the dominant bottleneck ───
+        # ── 4. Cost matrix on GPU float32 ────────────────────────────────
         C   = torch.cdist(x0_flat, x1_flat).pow(2)  # (B, B) GPU float32
-        c_med = float(torch.median(C).item())
-        eps   = c_med / float(np.log(B))
+        eps = self.eps                               # fixed eps (no median needed)
 
         # ── 5. Sinkhorn refinement — all torch ops on GPU ───────────────────
         log_K   = -C / eps                           # (B, B)
