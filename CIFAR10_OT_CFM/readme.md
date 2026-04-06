@@ -33,6 +33,13 @@ results/<model>/<model>_timing_report.txt after training completes.
 
 To compute the FID at end of training, run:
 
+# Adaptive intergration steps
 python3 compute_fid.py --model "otcfm" --step 400000 --integration_method dopri5
 python3 compute_fid.py --model "ra-ot"  --step 400000 --integration_method dopri5
 python3 compute_fid.py --model "oa-ot"  --step 400000 --integration_method dopri5
+
+# Fixed intergration steps (100 Euler)
+python3 compute_fid.py --model "otcfm" --step 400000 --integration_method euler --integration_steps 100
+python3 compute_fid.py --model "ra-ot"  --step 400000 --integration_method euler --integration_steps 100
+python3 compute_fid.py --model "oa-ot"  --step 400000 --integration_method euler --integration_steps 100
+
