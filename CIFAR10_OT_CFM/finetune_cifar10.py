@@ -199,6 +199,8 @@ def finetune(argv):
     n_params = sum(p.data.nelement() for p in net_model.parameters())
     print(f"  Model params: {n_params / 1e6:.2f} M")
 
+    # ── Flow Matching / Amortised OT setup ───────────────────────────────────
+    sigma              = 0.0
     interp_FM          = ConditionalFlowMatcher(sigma=sigma)
     amortized_solver   = None
     pretrain_time      = 0.0
@@ -331,7 +333,8 @@ def finetune(argv):
                 x0, x1 = amortized_solver.sample_pairs(x0, x1, cpu_ot=FLAGS.cpu_ot)
                 x0 = x0.to(device)
                 x1 = x1.to(device)
-                
+
+        
             if FLAGS.model == "otcfm" and FLAGS.cpu_ot:
                 x0_c, x1_c = FM.ot_sampler.sample_plan(x0.cpu(), x1.cpu())  # OT → CPU
 
