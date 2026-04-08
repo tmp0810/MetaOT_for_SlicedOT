@@ -54,6 +54,11 @@ flags.DEFINE_float("ema_decay", 0.999,
 flags.DEFINE_bool("parallel", False, help="Multi-GPU fine-tuning")
 flags.DEFINE_integer("save_step", 0,
                      help="Intermediate checkpoint frequency (0 = only save at end)")
+flags.DEFINE_bool("cpu_ot", False,
+                  help="Compute OT plan on CPU to save GPU memory. "
+                       "Use with large batch sizes (>= 2048) to avoid OOM. "
+                       "For otcfm: passes CPU tensors to FM (cdist+LP on CPU). "
+                       "For ra-ot/oa-ot: calls sample_pairs(cpu_ot=True).")
 
 # Amortised OT pre-training hyper-parameters (RA-OT / OA-OT only)
 flags.DEFINE_integer("pretrain_M", 50,
@@ -72,7 +77,6 @@ flags.DEFINE_float("pretrain_ridge", 1e-3,
 flags.DEFINE_float("pretrain_lr", 1e-3,
                    help="Adam lr for OA-OT dual-objective optimisation")
 
-# ─────────────────────────────────────────────────────────────────────────────
 CIFAR10_TRAIN_SIZE = 50_000   # used to derive steps-per-epoch
 
 use_cuda = torch.cuda.is_available()
@@ -80,12 +84,6 @@ device   = torch.device("cuda" if use_cuda else "cpu")
 
 
 def make_lr_lambda(total_steps: int):
-    """Linear warm-up for `warmup` steps, then cosine decay to 0.
-
-    This is better than flat-LR for fine-tuning:
-    - Warmup prevents a large initial gradient step on a converged model.
-    - Cosine decay ensures the last few steps don't over-shoot.
-    """
     warmup = FLAGS.warmup
 
     def _lr_lambda(step: int) -> float:
@@ -109,11 +107,6 @@ def _strip_module_prefix(state_dict: dict) -> dict:
 
 def load_pretrained(path: str, net_model: torch.nn.Module,
                     ema_model: torch.nn.Module) -> dict:
-    """Load a .pt checkpoint (same format as train_cifar10.py output).
-
-    Both net_model and ema_model are restored in-place.
-    Returns the raw checkpoint dict so the caller can inspect 'step' etc.
-    """
     assert os.path.isfile(path), \
         f"Checkpoint not found: {path}\n" \
         f"Train the I-CFM baseline first with train_cifar10.py --model icfm"
@@ -196,6 +189,9 @@ def finetune(argv):
 
     # ── Flow Matching / Amortised OT setup ───────────────────────────────────
     sigma              = 0.0
+    # interp_FM: used in cpu_ot mode for OT-CFM to run interpolation on GPU
+    # after the coupling has been computed on CPU (fair protocol — same as RA-OT/OA-OT).
+    interp_FM          = ConditionalFlowMatcher(sigma=sigma)
     amortized_solver   = None
     pretrain_time      = 0.0
 
@@ -323,11 +319,17 @@ def finetune(argv):
 
             # OT coupling (amortised or exact/independent)
             if amortized_solver is not None:
-                x0, x1 = amortized_solver.sample_pairs(x0, x1)
+                # cpu_ot=True: OT plan on CPU, only matched pairs move to GPU
+                x0, x1 = amortized_solver.sample_pairs(x0, x1, cpu_ot=FLAGS.cpu_ot)
                 x0 = x0.to(device)
                 x1 = x1.to(device)
 
-            t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
+            if FLAGS.model == "otcfm" and FLAGS.cpu_ot:
+                x0_c, x1_c = FM.compute_coupling(x0.cpu(), x1.cpu())  # OT → CPU
+                x0, x1 = x0_c.to(device), x1_c.to(device)             # pairs → GPU
+                t, xt, ut = interp_FM.sample_location_and_conditional_flow(x0, x1)
+            else:
+                t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
             vt   = net_model(t, xt)
             loss = torch.mean((vt - ut) ** 2)
             loss.backward()
