@@ -36,14 +36,21 @@ flags.DEFINE_string("output_dir", "./results_ft/",
 flags.DEFINE_integer("num_channel", 128, help="Base channel count of UNet")
 
 # Fine-tuning hyper-parameters
-flags.DEFINE_float("lr", 2e-4, help="Fine-tune learning rate")
-flags.DEFINE_float("grad_clip", 1.0, help="Gradient norm clipping")
+flags.DEFINE_float("lr", 2e-5,
+                   help="Fine-tune LR (default 2e-5 = 10× smaller than train-from-scratch 2e-4; "
+                        "model is already converged)")
+flags.DEFINE_float("grad_clip", 0.5,
+                   help="Gradient norm clipping (tighter than scratch training to protect features)")
 flags.DEFINE_integer("finetune_epochs", 2,
                      help="Number of passes through CIFAR-10 train set (1 epoch ≈ 390 steps at bs=128)")
-flags.DEFINE_integer("warmup", 200, help="LR warm-up steps")
+flags.DEFINE_integer("warmup", 100,
+                     help="LR warm-up steps (short warm-up then cosine decay to 0)")
 flags.DEFINE_integer("batch_size", 128, help="Batch size")
 flags.DEFINE_integer("num_workers", 4, help="DataLoader workers")
-flags.DEFINE_float("ema_decay", 0.9999, help="EMA decay rate")
+flags.DEFINE_float("ema_decay", 0.999,
+                   help="EMA decay rate (0.999 for fine-tuning; 0.9999 would leave EMA "
+                        "virtually unchanged over the short ~780-step fine-tune run, "
+                        "causing compute_fid.py to measure the original ICFM model)")
 flags.DEFINE_bool("parallel", False, help="Multi-GPU fine-tuning")
 flags.DEFINE_integer("save_step", 0,
                      help="Intermediate checkpoint frequency (0 = only save at end)")
@@ -53,8 +60,10 @@ flags.DEFINE_integer("pretrain_M", 50,
                      help="Mini-batches collected for OT pre-training")
 flags.DEFINE_integer("pretrain_L", 100,
                      help="Random projections for sliced OT")
-flags.DEFINE_integer("pretrain_T", 5000,
-                     help="Optimisation steps for OA-OT dual objective")
+flags.DEFINE_integer("pretrain_T", 1000,
+                     help="Optimisation steps for OA-OT dual objective "
+                          "(1000 for fine-tune; 5000 would make pretrain longer than the "
+                          "fine-tune phase itself which is only ~780 steps)")
 flags.DEFINE_float("pretrain_eps", 800.0,
                    help="Sinkhorn regularisation ε (applied directly to "
                         "squared-L2 cost in pixel space)")
@@ -70,8 +79,23 @@ use_cuda = torch.cuda.is_available()
 device   = torch.device("cuda" if use_cuda else "cpu")
 
 
-def warmup_lr(step: int) -> float:
-    return min(step, FLAGS.warmup) / FLAGS.warmup
+def make_lr_lambda(total_steps: int):
+    """Linear warm-up for `warmup` steps, then cosine decay to 0.
+
+    This is better than flat-LR for fine-tuning:
+    - Warmup prevents a large initial gradient step on a converged model.
+    - Cosine decay ensures the last few steps don't over-shoot.
+    """
+    warmup = FLAGS.warmup
+
+    def _lr_lambda(step: int) -> float:
+        if step < warmup:
+            return step / max(warmup, 1)                     # linear warm-up
+        progress = (step - warmup) / max(total_steps - warmup, 1)
+        import math
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))  # cosine
+
+    return _lr_lambda
 
 
 # ── Checkpoint loading (compatible with compute_fid.py) ───────────────────────
@@ -155,9 +179,13 @@ def finetune(argv):
     print("  Loading pretrained weights …")
     load_pretrained(FLAGS.checkpoint, net_model, ema_model)
 
-    # Fresh optimiser + LR scheduler for fine-tuning
+    # Fresh optimiser + LR scheduler
+    # NOTE: LR is intentionally much smaller than train-from-scratch (2e-5 vs 2e-4).
+    #       Cosine decay after warm-up avoids over-shooting a converged model.
     optim = torch.optim.Adam(net_model.parameters(), lr=FLAGS.lr)
-    sched = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=warmup_lr)
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        optim, lr_lambda=make_lr_lambda(total_ft_steps)
+    )
 
     if FLAGS.parallel:
         net_model = torch.nn.DataParallel(net_model)
