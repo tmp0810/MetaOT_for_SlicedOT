@@ -208,8 +208,7 @@ class AmortizedOA_OT_CIFAR:
 
         # ── 4. Cost matrix on GPU float32  ← was the dominant bottleneck ───
         C     = torch.cdist(x0_flat, x1_flat).pow(2)  # (B, B) GPU float32
-        c_med = float(torch.median(C).item())
-        eps   = c_med / float(np.log(B))
+        eps   = self.eps
 
         # ── 5. Sinkhorn refinement — all torch ops on GPU ───────────────────
         log_K   = -C / eps                             # (B, B)
