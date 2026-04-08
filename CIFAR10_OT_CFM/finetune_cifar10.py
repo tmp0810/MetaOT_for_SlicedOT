@@ -4,8 +4,6 @@ import time
 from collections import OrderedDict
 
 import torch
-from torch.cuda.amp import GradScaler
-from torch.cuda.amp import autocast as cuda_autocast
 from absl import app, flags
 from torchvision import datasets, transforms
 from tqdm import trange
@@ -21,10 +19,8 @@ from torchcfm.models.unet.unet import UNetModelWrapper
 from CIFAR10_OT_CFM.RA_OT_CIFAR import AmortizedRA_OT_CIFAR
 from CIFAR10_OT_CFM.OA_OT_CIFAR import AmortizedOA_OT_CIFAR
 
-# ── Flag definitions ──────────────────────────────────────────────────────────
 FLAGS = flags.FLAGS
 
-# Core
 flags.DEFINE_string("model", "otcfm",
                     help="Coupling method for fine-tuning: "
                          "fm | icfm | si | otcfm | ra-ot | oa-ot")
@@ -34,10 +30,8 @@ flags.DEFINE_string("checkpoint", "",
 flags.DEFINE_string("output_dir", "./results_ft/",
                     help="Root directory for fine-tuned checkpoints")
 
-# UNet architecture (must match the checkpoint)
 flags.DEFINE_integer("num_channel", 128, help="Base channel count of UNet")
 
-# Fine-tuning hyper-parameters
 flags.DEFINE_float("lr", 2e-5,
                    help="Fine-tune LR (default 2e-5 = 10× smaller than train-from-scratch 2e-4; "
                         "model is already converged)")
@@ -68,7 +62,6 @@ flags.DEFINE_integer("accum_steps", 1,
                           "The matched (t, xt, ut) are split into accum_steps micro-batches "
                           "for U-Net forward+backward, reducing peak activation memory ~N times. "
                           "Example: --batch_size=2048 --accum_steps=8 -> micro-batch=256 for UNet.")
-# Amortised OT pre-training hyper-parameters (RA-OT / OA-OT only)
 flags.DEFINE_integer("pretrain_M", 50,
                      help="Mini-batches collected for OT pre-training")
 flags.DEFINE_integer("pretrain_L", 100,
@@ -85,27 +78,31 @@ flags.DEFINE_float("pretrain_ridge", 1e-3,
 flags.DEFINE_float("pretrain_lr", 1e-3,
                    help="Adam lr for OA-OT dual-objective optimisation")
 
-# ─────────────────────────────────────────────────────────────────────────────
-CIFAR10_TRAIN_SIZE = 50_000   # used to derive steps-per-epoch
+CIFAR10_TRAIN_SIZE = 50_000
 
 use_cuda = torch.cuda.is_available()
 device   = torch.device("cuda" if use_cuda else "cpu")
 
 
 def make_lr_lambda(total_steps: int):
+    """Linear warm-up for `warmup` steps, then cosine decay to 0.
+
+    This is better than flat-LR for fine-tuning:
+    - Warmup prevents a large initial gradient step on a converged model.
+    - Cosine decay ensures the last few steps don't over-shoot.
+    """
     warmup = FLAGS.warmup
 
     def _lr_lambda(step: int) -> float:
         if step < warmup:
-            return step / max(warmup, 1)                     # linear warm-up
+            return step / max(warmup, 1)
         progress = (step - warmup) / max(total_steps - warmup, 1)
         import math
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))  # cosine
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
 
     return _lr_lambda
 
 
-# ── Checkpoint loading (compatible with compute_fid.py) ───────────────────────
 def _strip_module_prefix(state_dict: dict) -> dict:
     """Remove 'module.' prefix introduced by DataParallel."""
     new_sd = OrderedDict()
@@ -141,12 +138,10 @@ def load_pretrained(path: str, net_model: torch.nn.Module,
     return ckpt
 
 
-# ── Main fine-tuning function ─────────────────────────────────────────────────
 def finetune(argv):
     assert FLAGS.checkpoint, \
         "You must provide --checkpoint pointing to the pretrained I-CFM .pt file."
 
-    # ── Dataset / dataloader ─────────────────────────────────────────────────
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
@@ -160,8 +155,7 @@ def finetune(argv):
     )
     datalooper = infiniteloop(dataloader)
 
-    # steps_per_epoch: how many full batches fit in one pass over CIFAR-10
-    steps_per_epoch = CIFAR10_TRAIN_SIZE // FLAGS.batch_size   # 390 @ bs=128
+    steps_per_epoch = CIFAR10_TRAIN_SIZE // FLAGS.batch_size
     total_ft_steps  = FLAGS.finetune_epochs * steps_per_epoch
 
     print(f"\n{'='*60}")
@@ -173,7 +167,6 @@ def finetune(argv):
     print(f"  LR            : {FLAGS.lr}")
     print(f"{'='*60}\n")
 
-    # ── Model ────────────────────────────────────────────────────────────────
     net_model = UNetModelWrapper(
         dim=(3, 32, 32), num_res_blocks=2,
         num_channels=FLAGS.num_channel,
@@ -190,9 +183,6 @@ def finetune(argv):
     sched = torch.optim.lr_scheduler.LambdaLR(
         optim, lr_lambda=make_lr_lambda(total_ft_steps)
     )
-    # Mixed-precision scaler — handles inf/nan gradients from fp16 autocast.
-    # Disabled automatically on CPU (enabled=use_cuda).
-    scaler = GradScaler(enabled=use_cuda)
 
     if FLAGS.parallel:
         net_model = torch.nn.DataParallel(net_model)
@@ -201,10 +191,7 @@ def finetune(argv):
     n_params = sum(p.data.nelement() for p in net_model.parameters())
     print(f"  Model params: {n_params / 1e6:.2f} M")
 
-    # ── Flow Matching / Amortised OT setup ───────────────────────────────────
     sigma              = 0.0
-    # interp_FM: used in cpu_ot mode for OT-CFM to run interpolation on GPU
-    # after the coupling has been computed on CPU (fair protocol — same as RA-OT/OA-OT).
     interp_FM          = ConditionalFlowMatcher(sigma=sigma)
     amortized_solver   = None
     pretrain_time      = 0.0
@@ -221,7 +208,6 @@ def finetune(argv):
     elif FLAGS.model == "si":
         FM = VariancePreservingConditionalFlowMatcher(sigma=sigma)
 
-    # ── RA-OT ─────────────────────────────────────────────────────────────
     elif FLAGS.model == "ra-ot":
         FM = ConditionalFlowMatcher(sigma=sigma)
         ot_device = "cuda" if use_cuda else "cpu"
@@ -253,10 +239,9 @@ def finetune(argv):
         amortized_solver = solver
         print(f"  RA-OT pre-training done in {pretrain_time:.2f}s")
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()   # flush any pretrain GPU residuals
+            torch.cuda.empty_cache()
         print("="*60 + "\n")
 
-    # ── OA-OT ─────────────────────────────────────────────────────────────
     elif FLAGS.model == "oa-ot":
         FM = ConditionalFlowMatcher(sigma=sigma)
         ot_device = "cuda" if use_cuda else "cpu"
@@ -289,7 +274,7 @@ def finetune(argv):
         amortized_solver = solver
         print(f"  OA-OT pre-training done in {pretrain_time:.2f}s")
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()   # flush any pretrain GPU residuals
+            torch.cuda.empty_cache()
         print("="*60 + "\n")
 
     else:
@@ -302,7 +287,6 @@ def finetune(argv):
     savedir   = os.path.join(FLAGS.output_dir, model_tag) + "/"
     os.makedirs(savedir, exist_ok=True)
 
-    # ── PHASE 2: Fine-tuning loop ─────────────────────────────────────────────
     print("\n" + "="*60)
     print(f"  PHASE 2 — U-Net Fine-tuning  [{FLAGS.model.upper()}]")
     print(f"  Total steps: {total_ft_steps}  "
@@ -333,40 +317,31 @@ def finetune(argv):
             x1 = next(datalooper).to(device)
             x0 = torch.randn_like(x1)
 
-            # ── Step 1: OT coupling on FULL batch ────────────────────────────
-            # All OT ops run in float32 (CPU or GPU depending on cpu_ot flag).
-            # Do NOT put this inside autocast — OT math needs float32 precision.
             if amortized_solver is not None:
                 x0, x1 = amortized_solver.sample_pairs(x0, x1, cpu_ot=FLAGS.cpu_ot)
                 x0 = x0.to(device)
                 x1 = x1.to(device)
 
             if FLAGS.model == "otcfm" and FLAGS.cpu_ot:
-                # cpu_ot fair protocol: coupling on CPU, pairs back to GPU
                 x0_c, x1_c = FM.ot_sampler.sample_plan(x0.cpu(), x1.cpu())
                 x0, x1 = x0_c.to(device), x1_c.to(device)
                 t, xt, ut = interp_FM.sample_location_and_conditional_flow(x0, x1)
             else:
                 t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
 
-         
             B       = x1.shape[0]
-            mB      = B // FLAGS.accum_steps   # micro-batch size
+            mB      = B // FLAGS.accum_steps
             loss_log = 0.0
 
             for acc in range(FLAGS.accum_steps):
                 sl = slice(acc * mB, (acc + 1) * mB)
-                with cuda_autocast(enabled=use_cuda):
-                    vt_i   = net_model(t[sl], xt[sl])
-                    # Divide by accum_steps so summed gradients = mean over full batch
-                    loss_i = torch.mean((vt_i - ut[sl]) ** 2) / FLAGS.accum_steps
-                scaler.scale(loss_i).backward()
-                loss_log += loss_i.item()   # already scaled by 1/accum_steps
+                vt_i   = net_model(t[sl], xt[sl])
+                loss_i = torch.mean((vt_i - ut[sl]) ** 2) / FLAGS.accum_steps
+                loss_i.backward()
+                loss_log += loss_i.item()
 
-            scaler.unscale_(optim)
             torch.nn.utils.clip_grad_norm_(net_model.parameters(), FLAGS.grad_clip)
-            scaler.step(optim)
-            scaler.update()
+            optim.step()
             sched.step()
             ema(net_model, ema_model, FLAGS.ema_decay)
 
@@ -383,11 +358,9 @@ def finetune(argv):
     ft_time    = time.time() - ft_start
     total_time = pretrain_time + ft_time
 
-    # Always save final checkpoint
     final_step = total_ft_steps
     _save_checkpoint(final_step)
 
-    # ── Timing report ─────────────────────────────────────────────────────────
     print("\n" + "="*60)
     print(f"  Fine-tuning complete  [{FLAGS.model.upper()}]")
     print(f"  Pre-training time : {pretrain_time/3600:.4f} h  ({pretrain_time:.1f} s)")
