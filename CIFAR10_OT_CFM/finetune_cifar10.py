@@ -298,8 +298,6 @@ def finetune(argv):
             "Choices: fm | icfm | si | otcfm | ra-ot | oa-ot"
         )
 
-    # ── Output directory ─────────────────────────────────────────────────────
-    # Tag: "ft_<method>" so compute_fid.py is called with --model ft_<method>
     model_tag = f"ft_{FLAGS.model}"
     savedir   = os.path.join(FLAGS.output_dir, model_tag) + "/"
     os.makedirs(savedir, exist_ok=True)
