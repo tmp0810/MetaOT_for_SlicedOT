@@ -62,6 +62,12 @@ flags.DEFINE_bool("cpu_ot", False,
                        "For otcfm: passes CPU tensors to FM (cdist+LP on CPU). "
                        "For ra-ot/oa-ot: calls sample_pairs(cpu_ot=True).")
 
+flags.DEFINE_integer("accum_steps", 1,
+                     help="Gradient accumulation steps for the U-Net forward pass. "
+                          "OT coupling is always computed on the FULL batch (batch_size). "
+                          "The matched (t, xt, ut) are split into accum_steps micro-batches "
+                          "for U-Net forward+backward, reducing peak activation memory ~N times. "
+                          "Example: --batch_size=2048 --accum_steps=8 -> micro-batch=256 for UNet.")
 # Amortised OT pre-training hyper-parameters (RA-OT / OA-OT only)
 flags.DEFINE_integer("pretrain_M", 50,
                      help="Mini-batches collected for OT pre-training")
@@ -87,12 +93,6 @@ device   = torch.device("cuda" if use_cuda else "cpu")
 
 
 def make_lr_lambda(total_steps: int):
-    """Linear warm-up for `warmup` steps, then cosine decay to 0.
-
-    This is better than flat-LR for fine-tuning:
-    - Warmup prevents a large initial gradient step on a converged model.
-    - Cosine decay ensures the last few steps don't over-shoot.
-    """
     warmup = FLAGS.warmup
 
     def _lr_lambda(step: int) -> float:
@@ -186,9 +186,6 @@ def finetune(argv):
     print("  Loading pretrained weights …")
     load_pretrained(FLAGS.checkpoint, net_model, ema_model)
 
-    # Fresh optimiser + LR scheduler
-    # NOTE: LR is intentionally much smaller than train-from-scratch (2e-5 vs 2e-4).
-    #       Cosine decay after warm-up avoids over-shooting a converged model.
     optim = torch.optim.Adam(net_model.parameters(), lr=FLAGS.lr)
     sched = torch.optim.lr_scheduler.LambdaLR(
         optim, lr_lambda=make_lr_lambda(total_ft_steps)
@@ -338,49 +335,50 @@ def finetune(argv):
             x1 = next(datalooper).to(device)
             x0 = torch.randn_like(x1)
 
-            # OT coupling (amortised or exact/independent)
-            # NOTE: coupling runs in float32 (CPU ops) — autocast only wraps UNet.
+            # ── Step 1: OT coupling on FULL batch ────────────────────────────
+            # All OT ops run in float32 (CPU or GPU depending on cpu_ot flag).
+            # Do NOT put this inside autocast — OT math needs float32 precision.
             if amortized_solver is not None:
-                # cpu_ot=True: OT plan on CPU, only matched pairs move to GPU
                 x0, x1 = amortized_solver.sample_pairs(x0, x1, cpu_ot=FLAGS.cpu_ot)
                 x0 = x0.to(device)
                 x1 = x1.to(device)
 
-            # OT-CFM cpu_ot fair protocol — same as RA-OT/OA-OT:
-            #   (1) OT coupling  → CPU   (cost matrix + LP solver)
-            #   (2) matched pairs → GPU  (only x0_paired, x1)
-            #   (3) interpolation → GPU  (identical to amortised path)
             if FLAGS.model == "otcfm" and FLAGS.cpu_ot:
-                x0_c, x1_c = FM.ot_sampler.sample_plan(x0.cpu(), x1.cpu())  # OT → CPU
-                x0, x1 = x0_c.to(device), x1_c.to(device)             # pairs → GPU
+                # cpu_ot fair protocol: coupling on CPU, pairs back to GPU
+                x0_c, x1_c = FM.ot_sampler.sample_plan(x0.cpu(), x1.cpu())
+                x0, x1 = x0_c.to(device), x1_c.to(device)
                 t, xt, ut = interp_FM.sample_location_and_conditional_flow(x0, x1)
             else:
                 t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
 
-            # ── Mixed-precision forward + backward ─────────────────────────
-            # autocast casts UNet activations to float16, halving VRAM usage.
-            # ut stays float32 (computed before autocast); loss is computed
-            # inside so it's also float16 → scaler prevents underflow.
-            with cuda_autocast(enabled=use_cuda):
-                vt   = net_model(t, xt)
-                loss = torch.mean((vt - ut) ** 2)
+         
+            B       = x1.shape[0]
+            mB      = B // FLAGS.accum_steps   # micro-batch size
+            loss_log = 0.0
 
-            scaler.scale(loss).backward()
-            scaler.unscale_(optim)                       # unscale before clip
+            for acc in range(FLAGS.accum_steps):
+                sl = slice(acc * mB, (acc + 1) * mB)
+                with cuda_autocast(enabled=use_cuda):
+                    vt_i   = net_model(t[sl], xt[sl])
+                    # Divide by accum_steps so summed gradients = mean over full batch
+                    loss_i = torch.mean((vt_i - ut[sl]) ** 2) / FLAGS.accum_steps
+                scaler.scale(loss_i).backward()
+                loss_log += loss_i.item()   # already scaled by 1/accum_steps
+
+            scaler.unscale_(optim)
             torch.nn.utils.clip_grad_norm_(net_model.parameters(), FLAGS.grad_clip)
             scaler.step(optim)
             scaler.update()
             sched.step()
             ema(net_model, ema_model, FLAGS.ema_decay)
 
-            # Current epoch label for progress bar
             cur_epoch = step // steps_per_epoch + 1
             pbar.set_postfix(
-                loss=f"{loss.item():.4f}",
+                loss=f"{loss_log:.4f}",
                 epoch=f"{cur_epoch}/{FLAGS.finetune_epochs}",
+                acc=FLAGS.accum_steps,
             )
 
-            # Intermediate saves
             if FLAGS.save_step > 0 and step > 0 and step % FLAGS.save_step == 0:
                 _save_checkpoint(step)
 
