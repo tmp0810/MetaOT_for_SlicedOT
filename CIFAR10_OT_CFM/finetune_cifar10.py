@@ -4,7 +4,8 @@ import time
 from collections import OrderedDict
 
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
+from torch.cuda.amp import autocast as cuda_autocast
 from absl import app, flags
 from torchvision import datasets, transforms
 from tqdm import trange
@@ -360,7 +361,7 @@ def finetune(argv):
             # autocast casts UNet activations to float16, halving VRAM usage.
             # ut stays float32 (computed before autocast); loss is computed
             # inside so it's also float16 → scaler prevents underflow.
-            with autocast(device_type="cuda", enabled=use_cuda):
+            with cuda_autocast(enabled=use_cuda):
                 vt   = net_model(t, xt)
                 loss = torch.mean((vt - ut) ** 2)
 
