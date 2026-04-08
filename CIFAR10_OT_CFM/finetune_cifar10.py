@@ -4,6 +4,7 @@ import time
 from collections import OrderedDict
 
 import torch
+from torch.cuda.amp import GradScaler, autocast
 from absl import app, flags
 from torchvision import datasets, transforms
 from tqdm import trange
@@ -191,6 +192,9 @@ def finetune(argv):
     sched = torch.optim.lr_scheduler.LambdaLR(
         optim, lr_lambda=make_lr_lambda(total_ft_steps)
     )
+    # Mixed-precision scaler — handles inf/nan gradients from fp16 autocast.
+    # Disabled automatically on CPU (enabled=use_cuda).
+    scaler = GradScaler(enabled=use_cuda)
 
     if FLAGS.parallel:
         net_model = torch.nn.DataParallel(net_model)
@@ -201,6 +205,8 @@ def finetune(argv):
 
     # ── Flow Matching / Amortised OT setup ───────────────────────────────────
     sigma              = 0.0
+    # interp_FM: used in cpu_ot mode for OT-CFM to run interpolation on GPU
+    # after the coupling has been computed on CPU (fair protocol — same as RA-OT/OA-OT).
     interp_FM          = ConditionalFlowMatcher(sigma=sigma)
     amortized_solver   = None
     pretrain_time      = 0.0
@@ -248,6 +254,8 @@ def finetune(argv):
         pretrain_time    = solver.pretrain_time
         amortized_solver = solver
         print(f"  RA-OT pre-training done in {pretrain_time:.2f}s")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()   # flush any pretrain GPU residuals
         print("="*60 + "\n")
 
     # ── OA-OT ─────────────────────────────────────────────────────────────
@@ -282,6 +290,8 @@ def finetune(argv):
         pretrain_time    = solver.pretrain_time
         amortized_solver = solver
         print(f"  OA-OT pre-training done in {pretrain_time:.2f}s")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()   # flush any pretrain GPU residuals
         print("="*60 + "\n")
 
     else:
@@ -328,25 +338,37 @@ def finetune(argv):
             x0 = torch.randn_like(x1)
 
             # OT coupling (amortised or exact/independent)
+            # NOTE: coupling runs in float32 (CPU ops) — autocast only wraps UNet.
             if amortized_solver is not None:
                 # cpu_ot=True: OT plan on CPU, only matched pairs move to GPU
                 x0, x1 = amortized_solver.sample_pairs(x0, x1, cpu_ot=FLAGS.cpu_ot)
                 x0 = x0.to(device)
                 x1 = x1.to(device)
 
-        
+            # OT-CFM cpu_ot fair protocol — same as RA-OT/OA-OT:
+            #   (1) OT coupling  → CPU   (cost matrix + LP solver)
+            #   (2) matched pairs → GPU  (only x0_paired, x1)
+            #   (3) interpolation → GPU  (identical to amortised path)
             if FLAGS.model == "otcfm" and FLAGS.cpu_ot:
                 x0_c, x1_c = FM.ot_sampler.sample_plan(x0.cpu(), x1.cpu())  # OT → CPU
-
                 x0, x1 = x0_c.to(device), x1_c.to(device)             # pairs → GPU
                 t, xt, ut = interp_FM.sample_location_and_conditional_flow(x0, x1)
             else:
                 t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
-            vt   = net_model(t, xt)
-            loss = torch.mean((vt - ut) ** 2)
-            loss.backward()
+
+            # ── Mixed-precision forward + backward ─────────────────────────
+            # autocast casts UNet activations to float16, halving VRAM usage.
+            # ut stays float32 (computed before autocast); loss is computed
+            # inside so it's also float16 → scaler prevents underflow.
+            with autocast(device_type="cuda", enabled=use_cuda):
+                vt   = net_model(t, xt)
+                loss = torch.mean((vt - ut) ** 2)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optim)                       # unscale before clip
             torch.nn.utils.clip_grad_norm_(net_model.parameters(), FLAGS.grad_clip)
-            optim.step()
+            scaler.step(optim)
+            scaler.update()
             sched.step()
             ema(net_model, ema_model, FLAGS.ema_decay)
 
