@@ -65,6 +65,20 @@ except RuntimeError:
 new_net.eval()
 
 
+class NFECounter:
+    """Wraps a model to count forward-pass calls (= NFE for adaptive ODE solvers)."""
+    def __init__(self, model):
+        self.model = model
+        self.nfe = 0
+
+    def __call__(self, t, x):
+        self.nfe += 1
+        return self.model(t, x)
+
+
+nfe_model = NFECounter(new_net)
+
+
 # Define the integration method if euler is used
 if FLAGS.integration_method == "euler":
     node = NeuralODE(new_net, solver=FLAGS.integration_method)
@@ -81,7 +95,7 @@ def gen_1_img(unused_latent):
             print("Use method: ", FLAGS.integration_method)
             t_span = torch.linspace(0, 1, 2, device=device)
             traj = odeint(
-                new_net,
+                nfe_model,
                 x,
                 t_span,
                 rtol=FLAGS.tol,
@@ -108,4 +122,7 @@ print("FID has been computed")
 print()
 print("FID: ", score)
 print()
-print("Total NFE: ", new_net.nfe)
+if FLAGS.integration_method != "euler":
+    num_batches = -(-FLAGS.num_gen // FLAGS.batch_size_fid)
+    print(f"Total NFE (all batches): {nfe_model.nfe}")
+    print(f"Avg NFE per batch      : {nfe_model.nfe / max(num_batches, 1):.1f}")
