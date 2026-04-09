@@ -66,13 +66,19 @@ new_net.eval()
 
 
 class NFECounter:
-    """Wraps a model to count forward-pass calls (= NFE for adaptive ODE solvers)."""
     def __init__(self, model):
         self.model = model
-        self.nfe = 0
+        self._cur = 0
+        self.batch_nfes = []
+
+    def reset_batch(self):
+        self._cur = 0
+
+    def end_batch(self):
+        self.batch_nfes.append(self._cur)
 
     def __call__(self, t, x):
-        self.nfe += 1
+        self._cur += 1
         return self.model(t, x)
 
 
@@ -94,6 +100,7 @@ def gen_1_img(unused_latent):
         else:
             print("Use method: ", FLAGS.integration_method)
             t_span = torch.linspace(0, 1, 2, device=device)
+            nfe_model.reset_batch()
             traj = odeint(
                 nfe_model,
                 x,
@@ -102,6 +109,7 @@ def gen_1_img(unused_latent):
                 atol=FLAGS.tol,
                 method=FLAGS.integration_method,
             )
+            nfe_model.end_batch()
     traj = traj[-1, :]  # .view([-1, 3, 32, 32]).clip(-1, 1)
     img = (traj * 127.5 + 128).clip(0, 255).to(torch.uint8)  # .permute(1, 2, 0)
     return img
@@ -122,9 +130,11 @@ print("FID has been computed")
 print()
 print("FID: ", score)
 print()
-num_batches = -(-FLAGS.num_gen // FLAGS.batch_size_fid)
 if FLAGS.integration_method == "euler":
-    nfe_per_sample = FLAGS.integration_steps
+    nfe_per_sample = float(FLAGS.integration_steps)
+    print(f"NFE / sample: {nfe_per_sample:.0f}  (fixed-step Euler, steps={FLAGS.integration_steps})")
 else:
-    nfe_per_sample = nfe_model.nfe / max(num_batches, 1)
-print(f"NFE / sample: {nfe_per_sample:.1f}")
+    nfes = nfe_model.batch_nfes
+    mean_nfe = sum(nfes) / len(nfes)
+    print(f"NFE / sample: {mean_nfe:.2f}")
+    print(f"  (avg over {len(nfes)} batches | min={min(nfes)} max={max(nfes)})")
