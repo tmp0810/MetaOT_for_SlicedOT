@@ -122,7 +122,9 @@ print("FID has been computed")
 print()
 print("FID: ", score)
 print()
-if FLAGS.integration_method != "euler":
-    num_batches = -(-FLAGS.num_gen // FLAGS.batch_size_fid)
-    print(f"Total NFE (all batches): {nfe_model.nfe}")
-    print(f"Avg NFE per batch      : {nfe_model.nfe / max(num_batches, 1):.1f}")
+num_batches = -(-FLAGS.num_gen // FLAGS.batch_size_fid)
+if FLAGS.integration_method == "euler":
+    nfe_per_sample = FLAGS.integration_steps
+else:
+    nfe_per_sample = nfe_model.nfe / max(num_batches, 1)
+print(f"NFE / sample: {nfe_per_sample:.1f}")
