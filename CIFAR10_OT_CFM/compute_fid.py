@@ -48,8 +48,8 @@ new_net = UNetModelWrapper(
 
 # Load the model
 #PATH = f"{FLAGS.input_dir}/{FLAGS.model}/{FLAGS.model}_cifar10_weights_step_{FLAGS.step}.pt"
-#PATH = "/root/ft_ra-ot_cifar10_weights_step_240.pt"
-PATH = "/root/ft_otcfm_cifar10_weights_step_240.pt"
+PATH = "/root/ft_ra-ot_cifar10_weights_step_240.pt"
+#PATH = "/root/ft_otcfm_cifar10_weights_step_240.pt"
 #PATH = "/root/ft_icfm_cifar10_weights_step_240.pt"
 
 
