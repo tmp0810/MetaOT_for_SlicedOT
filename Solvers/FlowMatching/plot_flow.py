@@ -20,42 +20,40 @@ METHOD_COLORS = {
 
 def plot_trajectories(result_dir, out_dir, n_show=500):
     for ds in DATASETS:
-        fig, axes = plt.subplots(1, len(METHODS), figsize=(5 * len(METHODS), 4.5))
-        fig.suptitle(f"Gaussian → {DS_LABELS[ds]}", fontsize=16, y=1.02)
+        ds_dir = os.path.join(out_dir, "trajectories", ds)
+        os.makedirs(ds_dir, exist_ok=True)
 
-        for j, method in enumerate(METHODS):
-            ax = axes[j]
+        for method in METHODS:
             fpath = os.path.join(result_dir, f"traj_{ds}_{method}.pt")
             if not os.path.exists(fpath):
-                ax.set_title(method, fontsize=13)
-                ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center")
+                print(f"  [skip] no data: traj_{ds}_{method}.pt")
                 continue
 
             traj = torch.load(fpath, map_location="cpu").numpy()  # (T, N, 2)
             T_steps, N, _ = traj.shape
             ns = min(n_show, N)
 
+            fig, ax = plt.subplots(figsize=(4.5, 4.5))
+
             # flow lines
             ax.scatter(traj[:, :ns, 0].ravel(), traj[:, :ns, 1].ravel(),
                        s=0.15, alpha=0.12, c="olive", rasterized=True)
             # source
             ax.scatter(traj[0, :ns, 0], traj[0, :ns, 1],
-                       s=8, alpha=0.6, c="black", zorder=3, label="Source")
+                       s=8, alpha=0.6, c="black", zorder=3)
             # generated
             ax.scatter(traj[-1, :ns, 0], traj[-1, :ns, 1],
-                       s=6, alpha=0.8, c=METHOD_COLORS[method], zorder=4, label="Generated")
+                       s=6, alpha=0.8, c=METHOD_COLORS[method], zorder=4)
 
-            ax.set_title(method, fontsize=13, fontweight="bold")
             ax.set_xticks([]); ax.set_yticks([])
             ax.set_aspect("equal")
-            if j == 0:
-                ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
+            plt.tight_layout(pad=0.2)
 
-        plt.tight_layout()
-        save_path = os.path.join(out_dir, f"traj_{ds}.png")
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  → {save_path}")
+            safe_method = method.replace("/", "-")
+            save_path = os.path.join(ds_dir, f"{safe_method}.png")
+            fig.savefig(save_path, dpi=200, bbox_inches="tight")
+            plt.close(fig)
+            print(f"  → {save_path}")
 
 
 def plot_metrics(result_dir, out_dir):
@@ -122,35 +120,33 @@ def plot_distributions(result_dir, out_dir, n_show=2000):
 
     for ds in DATASETS:
         target = TARGET_SAMPLERS[ds](5000).numpy()
+        ds_dir = os.path.join(out_dir, "distributions", ds)
+        os.makedirs(ds_dir, exist_ok=True)
 
-        fig, axes = plt.subplots(1, len(METHODS), figsize=(5 * len(METHODS), 4.5))
-        fig.suptitle(f"Generated vs Ground Truth — {DS_LABELS[ds]}",
-                     fontsize=16, y=1.02)
-
-        for j, method in enumerate(METHODS):
-            ax = axes[j]
+        for method in METHODS:
             fpath = os.path.join(result_dir, f"traj_{ds}_{method}.pt")
             if not os.path.exists(fpath):
-                ax.set_title(method); continue
+                print(f"  [skip] no data: traj_{ds}_{method}.pt")
+                continue
 
             traj = torch.load(fpath, map_location="cpu").numpy()
             gen  = traj[-1][:n_show]
 
+            fig, ax = plt.subplots(figsize=(4.5, 4.5))
+
             ax.scatter(target[:n_show, 0], target[:n_show, 1],
-                       s=4, alpha=0.25, c="gray", label="Ground Truth")
+                       s=4, alpha=0.25, c="gray")
             ax.scatter(gen[:, 0], gen[:, 1],
-                       s=4, alpha=0.5, c=METHOD_COLORS[method], label=method)
-            ax.set_title(method, fontsize=13, fontweight="bold")
+                       s=4, alpha=0.5, c=METHOD_COLORS[method])
             ax.set_xticks([]); ax.set_yticks([])
             ax.set_aspect("equal")
-            if j == 0:
-                ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
+            plt.tight_layout(pad=0.2)
 
-        plt.tight_layout()
-        save_path = os.path.join(out_dir, f"dist_{ds}.png")
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  → {save_path}")
+            safe_method = method.replace("/", "-")
+            save_path = os.path.join(ds_dir, f"{safe_method}.png")
+            fig.savefig(save_path, dpi=200, bbox_inches="tight")
+            plt.close(fig)
+            print(f"  → {save_path}")
 
 
 # ======================================================================
