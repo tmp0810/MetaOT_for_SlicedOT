@@ -202,9 +202,7 @@ def compute_npe(model, x0_test, n_steps=101, device="cpu"):
 
 def main():
     parser = argparse.ArgumentParser()
-    #parser.add_argument("--datasets", nargs="+", default=["8gaussians", "moons", "scurve"])
-    parser.add_argument("--datasets", nargs="+",
-                        default=["8gaussians"])
+    parser.add_argument("--datasets", nargs="+", default=["8gaussians", "moons", "scurve"])
     parser.add_argument("--n_steps",  type=int, default=20000)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--L",        type=int, default=100)
@@ -240,7 +238,6 @@ def main():
         
         results[ds_name] = {}
 
-        # ---------- I-CFM ----------
         model_icfm, t_icfm = train_flow(
             "I-CFM", pair_independent, target_sampler,
             n_steps=args.n_steps, batch_size=args.batch_size,
@@ -253,7 +250,6 @@ def main():
                                          train_time=t_icfm, pretrain_time=0.0)
         print(f"[I-CFM]   W2={w2_icfm:.4f}  NPE={npe_icfm:.4f}  time={t_icfm:.1f}s")
 
-        # ---------- OT-CFM ----------
         model_ot, t_ot = train_flow(
             "OT-CFM", pair_exact_ot, target_sampler,
             n_steps=args.n_steps, batch_size=args.batch_size,
@@ -266,7 +262,6 @@ def main():
                                            train_time=t_ot, pretrain_time=0.0)
         print(f"[OT-CFM]  W2={w2_ot:.4f}  NPE={npe_ot:.4f}  time={t_ot:.1f}s")
 
-        # ---------- RA-OT-FM ----------
         ra_ot = AmortizedRA_OT(L=args.L, eps=args.eps, ridge=1e-3, device=dev)
         ra_ot.pretrain(sample_gaussian, target_sampler,
                        M=args.M_pretrain, B=args.batch_size)
@@ -288,7 +283,6 @@ def main():
         print(f"[RA-OT]   W2={w2_ra:.4f}  NPE={npe_ra:.4f}  "
               f"time={t_ra:.1f}s  pretrain={ra_ot.pretrain_time:.1f}s")
 
-        # ---------- OA-OT-FM ----------
         oa_ot = AmortizedOA_OT(L=args.L, eps=args.eps, lr=1e-3, device=dev)
         oa_ot.pretrain(sample_gaussian, target_sampler,
                        M=args.M_pretrain, B=args.batch_size,
@@ -311,18 +305,14 @@ def main():
         print(f"[OA-OT]   W2={w2_oa:.4f}  NPE={npe_oa:.4f}  "
               f"time={t_oa:.1f}s  pretrain={oa_ot.pretrain_time:.1f}s")
 
-        # ---------- save trajectories for plotting ----------
         for name, traj in [("I-CFM", traj_icfm), ("OT-CFM", traj_ot),
                            ("RA-OT-FM", traj_ra), ("OA-OT-FM", traj_oa)]:
             torch.save(traj.cpu(),
                        os.path.join(args.outdir, f"traj_{ds_name}_{name}.pt"))
 
-    # ---- save summary ----
     with open(os.path.join(args.outdir, "results.json"), "w") as f:
         json.dump(results, f, indent=2)
     print(f"\n✓ Results saved to {args.outdir}/results.json")
-
-    # ---- print table ----
     print(f"\n{'Method':<14} {'Dataset':<14} {'W2':>8} {'NPE':>10} "
           f"{'Train(s)':>10} {'Pretrain(s)':>12}")
     print("-" * 70)
