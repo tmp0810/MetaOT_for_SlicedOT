@@ -85,12 +85,6 @@ device   = torch.device("cuda" if use_cuda else "cpu")
 
 
 def make_lr_lambda(total_steps: int):
-    """Linear warm-up for `warmup` steps, then cosine decay to 0.
-
-    This is better than flat-LR for fine-tuning:
-    - Warmup prevents a large initial gradient step on a converged model.
-    - Cosine decay ensures the last few steps don't over-shoot.
-    """
     warmup = FLAGS.warmup
 
     def _lr_lambda(step: int) -> float:
@@ -104,7 +98,6 @@ def make_lr_lambda(total_steps: int):
 
 
 def _strip_module_prefix(state_dict: dict) -> dict:
-    """Remove 'module.' prefix introduced by DataParallel."""
     new_sd = OrderedDict()
     for k, v in state_dict.items():
         new_sd[k[7:] if k.startswith("module.") else k] = v
@@ -113,11 +106,6 @@ def _strip_module_prefix(state_dict: dict) -> dict:
 
 def load_pretrained(path: str, net_model: torch.nn.Module,
                     ema_model: torch.nn.Module) -> dict:
-    """Load a .pt checkpoint (same format as train_cifar10.py output).
-
-    Both net_model and ema_model are restored in-place.
-    Returns the raw checkpoint dict so the caller can inspect 'step' etc.
-    """
     assert os.path.isfile(path), \
         f"Checkpoint not found: {path}\n" \
         f"Train the I-CFM baseline first with train_cifar10.py --model icfm"
