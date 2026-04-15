@@ -16,10 +16,10 @@ plt.style.use("bmh")
 
 
 def apply_color_transfer(
-    src_img:     np.ndarray,   # (H, W, 3) uint8  original source image
-    src_labels:  np.ndarray,   # (H*W,)    int64  KMeans label per pixel
-    tgt_centroids: np.ndarray, # (K, 3)    float64 target cluster centers [0,1]
-    P:           np.ndarray,   # (K_src, K_tgt) transport plan
+    src_img:     np.ndarray,   
+    src_labels:  np.ndarray,   
+    tgt_centroids: np.ndarray,
+    P:           np.ndarray,   
 ) -> np.ndarray:
     row_sums      = P.sum(axis=1, keepdims=True).clip(1e-12, None)
     P_row         = P / row_sums                            # row-stochastic
@@ -47,17 +47,12 @@ def parse_args():
     return p.parse_args()
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
-
 def main():
     args = parse_args()
 
-    # ── Load test pairs ───────────────────────────────────────────────────
     with open(os.path.join(args.result_dir, "test_pairs.pkl"), "rb") as f:
         test_pairs = pickle.load(f)
     print(f"Loaded {len(test_pairs)} test pairs.")
-
-    # ── Load trained models ────────────────────────────────────────────────
     def load_pkl(name):
         with open(os.path.join(args.result_dir, name), "rb") as f:
             return pickle.load(f)
@@ -78,7 +73,6 @@ def main():
         ("Min_STP",       model_stp.predict_plan),
     ]
 
-    # test_pairs format: (sw, sc, sl, src_img, tw, tc, tgt_img, src_path, tgt_path)
     indices = range(len(test_pairs)) if args.idx == "all" else [int(args.idx)]
 
     for idx in indices:
@@ -89,17 +83,12 @@ def main():
         pair_dir = os.path.join(args.result_dir, "plots", f"pair_{idx:02d}")
         os.makedirs(pair_dir, exist_ok=True)
 
-        # ── Source image ──────────────────────────────────────────────────
         save_image(src_img, os.path.join(pair_dir, "Source.png"))
-
-        # ── Target image ──────────────────────────────────────────────────
         save_image(tgt_img, os.path.join(pair_dir, "Target.png"))
 
-        # ── Precompute cost matrix (shared by Sinkhorn + all methods) ─────
         diff = sc[:, None, :] - tc[None, :, :]      # (K_src, K_tgt, 3)
         C    = np.sum(diff ** 2, axis=-1)            # (K_src, K_tgt)
 
-        # ── Sinkhorn ground truth ─────────────────────────────────────────
         if not args.no_baseline:
             print(f"  [Sinkhorn_GT] computing ...")
             a_s = np.clip(sw, 1e-10, None); a_s /= a_s.sum()
@@ -112,7 +101,6 @@ def main():
             img_sink = apply_color_transfer(src_img, sl, tc, P_sink)
             save_image(img_sink, os.path.join(pair_dir, "Sinkhorn_GT.png"))
 
-        # ── Each method → one standalone PNG ─────────────────────────────
         for name, predict_fn in methods:
             print(f"  [{name}] computing ...")
             try:
