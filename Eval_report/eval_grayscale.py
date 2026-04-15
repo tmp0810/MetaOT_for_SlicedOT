@@ -14,10 +14,8 @@ from Data.dataset_class import MNIST
 
 POOL_SEED  = 0
 POOL_SIZE  = 1000
-TRAIN_RATIO = 0.7   # 490 train / 210 test
+TRAIN_RATIO = 0.7   
 
-
-# ── helpers ───────────────────────────────────────────────────────────────────
 
 def build_cost_grid(img_size=28):
     grid = np.array([[j, i]
@@ -34,7 +32,6 @@ def sinkhorn_gt(a, b, C, eps, n_iter=800):
 
 
 def sample_pairs(n, seed):
-    """Sample n MNIST pairs reproducibly. Returns list of (a, b) numpy arrays."""
     np.random.seed(seed)
     dataset = MNIST(flag_train=True, cfg_m=argparse.Namespace(datasets_root="../datasets"))
     pairs = []
@@ -47,9 +44,6 @@ def sample_pairs(n, seed):
 
 
 def evaluate(predict_fn, test_pairs, C, eps, name):
-    """predict_fn(a, b) → P numpy array."""
-    # Warmup: 1 dummy call to trigger CUDA JIT / memory allocation
-    # so cold-start outlier doesn't skew inference timing stats
     if test_pairs:
         try: predict_fn(*test_pairs[0])
         except Exception: pass
@@ -72,8 +66,6 @@ def save_model(model, path):
 
 
 def pairs_to_loader(pairs, batch_size=1):
-    """Wrap a list of (a,b) pairs into a DataLoader-like iterable."""
-    # yields (_, _, a_batch, b_batch) to match existing _fit() interface
     import torch
     data = [(torch.zeros(1), torch.zeros(1),
              torch.tensor(a, dtype=torch.float64),
@@ -111,9 +103,6 @@ def make_cfg_proj(solver, seed, gpu, flag_time):
                               flag_load=None, solver=solver,
                               data_name="MNIST", gpu=gpu)
 
-
-# ── main ──────────────────────────────────────────────────────────────────────
-
 def main():
     args = parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -123,9 +112,8 @@ def main():
     C   = build_cost_grid(28)
     eps = 1e-2
 
-    # ── Pre-sample pool ONCE, split 70/30, shared by ALL methods ──────────
-    n_train_pool = int(POOL_SIZE * TRAIN_RATIO)   # 490
-    n_test_pool  = POOL_SIZE - n_train_pool        # 210
+    n_train_pool = int(POOL_SIZE * TRAIN_RATIO)  
+    n_test_pool  = POOL_SIZE - n_train_pool       
 
     assert args.M <= n_train_pool, \
         f"M={args.M} exceeds train pool size {n_train_pool}"
@@ -145,7 +133,6 @@ def main():
     print(f"  Using M={args.M} train pairs  |  N={args.N} test pairs")
     print(f"  → All 4 methods will use EXACTLY these same pairs.\n")
 
-    # Save test pairs so plot scripts can reload the exact same pairs
     test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
     os.makedirs(os.path.dirname(test_pairs_path), exist_ok=True)
     with open(test_pairs_path, "wb") as _f:
@@ -155,7 +142,6 @@ def main():
     dl_train = pairs_to_loader(train_pairs, batch_size=1)
     results  = []
 
-    # ── 1. OT Regression Sliced ───────────────────────────────────────────
     print("[1/4] OT Regression Sliced (Method 1) ...")
     from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced
 
@@ -179,7 +165,6 @@ def main():
     results.append(("OT Regression (M1)", rmse_r, tinf_r, t_reg))
     print(f"  Train: {t_reg:.1f}s  RMSE: {rmse_r.mean():.2e}  Infer: {tinf_r.mean()*1000:.2f}ms")
 
-    # ── 2. OT Objective Sliced ────────────────────────────────────────────
     print("\n[2/4] OT Objective Sliced (Method 2) ...")
     from Solvers.Objective_SlicedOT.OT_Objective_Sliced import OT_Objective_Sliced
 
@@ -202,14 +187,11 @@ def main():
     results.append(("OT Objective (M2)", rmse_o, tinf_o, t_obj))
     print(f"  Train: {t_obj:.1f}s  RMSE: {rmse_o.mean():.2e}  Infer: {tinf_o.mean()*1000:.2f}ms")
 
-    # ── 3. Meta OT (OT_Discrete) ──────────────────────────────────────────
     print("\n[3/4] Meta OT GrayScale (baseline) ...")
     from Solvers.Meta_OT.Meta_OT_gray_scale import OT_Discrete, dual_obj_loss
     from Models.ot_models import PotentialMLP
 
     cfg_meta = init_cfg("OT_Discrete")
-    # Compute budget = 5000 gradient steps (same as Method 2 num_train_iter=5000).
-    # OT_Discrete uses epoch-based loop → epochs = 5000 // M to get ~5000 total steps.
     T_target = 5000
     cfg_meta["epochs"]       = max(1, T_target // args.M)
     cfg_meta["batch_size"]   = 1
@@ -243,7 +225,6 @@ def main():
     results.append(("Meta OT (baseline)", rmse_m, tinf_m, t_meta))
     print(f"  Train: {t_meta:.1f}s  RMSE: {rmse_m.mean():.2e}  Infer: {tinf_m.mean()*1000:.2f}ms")
 
-    # ── 4. min-SWGG ───────────────────────────────────────────────────────
     print("\n[4/4] min-SWGG GrayScale (baseline, no training) ...")
     from Solvers.SWGG.min_SWGG_GrayScale import min_SWGG_GrayScale
 
@@ -258,8 +239,6 @@ def main():
     print(f"  RMSE: {rmse_s.mean():.2e}  Infer: {tinf_s.mean()*1000:.2f}ms")
 
     
-
-    # ── 5. Min-STP GrayScale ──────────────────────────────────────────────
     print("\n[5/5] Min-STP GrayScale (amortized baseline) ...")
     from Solvers.MinSTP.Min_STP_GrayScale import Min_STP_GrayScale
  
@@ -278,7 +257,6 @@ def main():
     results.append(("Min-STP (baseline)", rmse_stp, tinf_stp, t_stp))
     print(f"  Train: {t_stp:.1f}s  RMSE: {rmse_stp.mean():.2e}  Infer: {tinf_stp.mean()*1000:.2f}ms")
  
-    # ── Print table & save CSV ─────────────────────────────────────────────
     print_table(results, args.M, args.N)
  
     csv_path = os.path.join(args.out, f"results_M{args.M}.csv")
