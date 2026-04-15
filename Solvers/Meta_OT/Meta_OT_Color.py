@@ -229,10 +229,8 @@ class Meta_OT_Color(Defense_Train_Base):
         log_P  = f_np[:, None] / eps - C_np / eps + g_np[None, :] / eps
         log_P -= log_P.max()
         P      = np.clip(np.exp(log_P), 0.0, None)
-
-        for _ in range(1):
-            P = P * (a / P.sum(1).clip(1e-300))[:, None]
-            P = P * (b / P.sum(0).clip(1e-300))[None, :]
+        P = P * (a / P.sum(1).clip(1e-300))[:, None]
+        P = P * (b / P.sum(0).clip(1e-300))[None, :]
         P = np.clip(P, 0.0, None)
         s = P.sum()
         if s > 0:
