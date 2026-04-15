@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import ot
 import matplotlib
-matplotlib.use("Agg")          # headless rendering
+matplotlib.use("Agg")       
 import matplotlib.pyplot as plt
 
 plt.style.use("bmh")
@@ -108,7 +108,6 @@ def interp_plan(
 
 
 def save_strip(strip: np.ndarray, path: str):
-    """Save the horizontal strip as a PNG with Blues colormap, no axes."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     plt.imsave(path, strip, cmap="Blues")
     print(f"    Saved → {path}")
@@ -150,24 +149,20 @@ def main():
     eps      = 1e-2
     C        = build_cost_grid(img_size)
 
-    # ── Load test pairs ────────────────────────────────────────────────────
     test_pairs = load_pkl(os.path.join(args.result_dir, "test_pairs.pkl"))
     print(f"Loaded {len(test_pairs)} test pairs from {args.result_dir}")
 
-    # ── Load trained models ────────────────────────────────────────────────
     model_reg  = load_pkl(os.path.join(args.result_dir, "regression.pkl"))
     model_obj  = load_pkl(os.path.join(args.result_dir, "objective.pkl"))
     model_meta = load_pkl(os.path.join(args.result_dir, "meta_ot.pkl"))
     model_swgg = load_pkl(os.path.join(args.result_dir, "swgg.pkl"))
     model_stp  = load_pkl(os.path.join(args.result_dir, "min_stp.pkl"))
 
-    # Meta OT MLP was saved inside the pickle
     mlp     = model_meta._eval_mlp
     lf_meta = model_meta._eval_lf
     mlp.eval()
     dev = next(mlp.parameters()).device
 
-    # ── Define predict functions (all return numpy P matrix) ──────────────
     def predict_reg(a, b):
         f, g = model_reg._predict_potentials(a, b, model_reg.alpha)
         return model_reg._potentials_to_plan(a, b, f, g)
@@ -186,7 +181,6 @@ def main():
     def predict_gt(a, b):
         return sinkhorn_gt(a, b, C, eps)
 
-    # Method name → predict function  (order = paper display order)
     methods = [
         ("Sinkhorn_GT",    predict_gt),
         ("OT_Regression",  predict_reg),
@@ -196,7 +190,6 @@ def main():
         ("Min_STP",        model_stp.predict_plan),
     ]
 
-    # ── Select pairs to plot ───────────────────────────────────────────────
     indices = range(len(test_pairs)) if args.idx == "all" else [int(args.idx)]
 
     for idx in indices:
