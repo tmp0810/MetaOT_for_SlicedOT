@@ -149,7 +149,6 @@ def plot_distributions(result_dir, out_dir, n_show=2000):
             print(f"  → {save_path}")
 
 
-# ======================================================================
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--result_dir", type=str, default="./results_flow")
