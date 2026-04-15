@@ -42,28 +42,25 @@ def plot_transport(
     landmask:    np.ndarray,   # 2-D binary land mask
     out_path:    str,
 ):
-    T = P.argmax(axis=0)                        # (n_demand,) — each demand → best supply
-    demand_to_supply_euc = supply_euc[T]        # (n_demand, 3)
+    T = P.argmax(axis=0)                       
+    demand_to_supply_euc = supply_euc[T]        
 
     colors = plt.style.library["bmh"]["axes.prop_cycle"].by_key()["color"]
 
-    fig, ax = plt.subplots(figsize=(6, 4))      # ← paper: (6, 4)
+    fig, ax = plt.subplots(figsize=(6, 4))     
 
-    # Land mask background
     ax.imshow(
         landmask, cmap="gray_r",
         extent=[-np.pi, np.pi, 0, np.pi],
         alpha=0.15,
     )
 
-    # Active supply nodes
     active = a > 1e-10
     ax.scatter(
         supply_sph[active, 0], supply_sph[active, 1],
         s=4., color="k", zorder=10,             # ← paper: s=4.
     )
 
-    # Geodesic arcs: demand[j] → assigned supply
     n_demand = len(b)
     for j in range(n_demand):
         sph = geodesic_arc(
@@ -77,34 +74,27 @@ def plot_transport(
             alpha=0.1,           # ← paper: alpha=.1
             linewidth=1,         # ← paper: linewidth=1
         )
-
-    # ── Finalize exactly as in paper ─────────────────────────────────────
-    # NOTE: tight_layout() BEFORE removing ticks/spines (paper order)
+        
     fig.tight_layout()
     ax.set_xticks([])
     ax.set_yticks([])
     ax.grid(False)
-    ax.spines["top"].set_visible(False)         # ← paper uses explicit per-spine
+    ax.spines["top"].set_visible(False)        
     ax.spines["right"].set_visible(False)
     ax.spines["bottom"].set_visible(False)
     ax.spines["left"].set_visible(False)
     # NO ax.set_title() — paper has none
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    fig.savefig(out_path, transparent=True)     # ← paper: no bbox_inches
+    fig.savefig(out_path, transparent=True)   
     plt.close(fig)
 
-    # pdfcrop if available (paper: os.system(f'pdfcrop {fname} {fname}'))
     if shutil.which("pdfcrop"):
         os.system(f'pdfcrop "{out_path}" "{out_path}"')
 
     print(f"  Saved → {out_path}")
 
-
-# ── landmask loader ───────────────────────────────────────────────────────────
-
 def load_landmask(pop_tiff: str) -> np.ndarray:
-    """Read population TIFF, downsample ×4, return binary land mask."""
     import rasterio
     from rasterio.enums import Resampling
 
@@ -123,9 +113,6 @@ def load_landmask(pop_tiff: str) -> np.ndarray:
     raw[raw < 0] = 0.0
     return (raw > 0).astype(np.float32)
 
-
-# ── argparse ──────────────────────────────────────────────────────────────────
-
 def parse_args():
     p = argparse.ArgumentParser(
         description="Plot world-pair transport in Meta OT paper format.")
@@ -139,13 +126,8 @@ def parse_args():
                    help="Skip Sinkhorn GT computation")
     return p.parse_args()
 
-
-# ── main ──────────────────────────────────────────────────────────────────────
-
 def main():
     args = parse_args()
-
-    # ── Load test pairs + geometry ────────────────────────────────────────
     with open(os.path.join(args.result_dir, "test_pairs.pkl"), "rb") as f:
         data = pickle.load(f)
     test_pairs = data["pairs"]
@@ -154,7 +136,6 @@ def main():
     supply_sph = data["supply_sph"]   # (n_supply, 2)
     print(f"Loaded {len(test_pairs)} test pairs.")
 
-    # ── Load trained models ────────────────────────────────────────────────
     def load_pkl(name):
         with open(os.path.join(args.result_dir, name), "rb") as f:
             return pickle.load(f)
@@ -173,7 +154,6 @@ def main():
         ("Min_STP",       model_stp.predict_plan),
     ]
 
-    # ── Load landmask + cost ──────────────────────────────────────────────
     landmask = load_landmask(args.pop_tiff)
     from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import _sphere_cost
     C   = _sphere_cost(supply_euc, demand_euc)
@@ -187,7 +167,6 @@ def main():
         pair_dir = os.path.join(args.result_dir, "plots", f"pair_{idx:02d}")
         os.makedirs(pair_dir, exist_ok=True)
 
-        # Sinkhorn ground truth
         if not args.no_baseline:
             print("  [Sinkhorn_GT] computing ...")
             a_s = np.clip(a, 1e-10, None); a_s /= a_s.sum()
@@ -202,7 +181,6 @@ def main():
                 out_path=os.path.join(pair_dir, "Sinkhorn_GT.pdf"),
             )
 
-        # Each method
         for name, predict_fn in methods:
             print(f"  [{name}] computing ...")
             try:
