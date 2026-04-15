@@ -129,10 +129,6 @@ class min_SWGG_GrayScale(Defense_Train_Base):
 
 
     def train(self, dataloader_train, dataloader_test):
-        """
-        min-SWGG has no training phase.
-        Runs test evaluation directly.
-        """
         self.logger.info(
             f"[min_SWGG_GrayScale] No training needed.  "
             f"n_projections={self.cfg_m.n_projections}  "
