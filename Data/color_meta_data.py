@@ -13,26 +13,18 @@ class ImageSampler:
                  num_rgb_sample: int = None, seed: int = 0):
         self.path  = image_path
         self.image = Image.open(image_path).convert("RGB")
-
-        # ── flat_pixels: raw pixels / 255, shape (N, 3) ───────────────────
-        # JAX: (array.transpose(2,0,1).reshape(3,-1)/255.).T
         flat = np.array(self.image, dtype=np.float32).reshape(-1, 3) / 255.0  # (N, 3)
         if num_rgb_sample is not None and len(flat) > num_rgb_sample:
             rng  = np.random.default_rng(seed)
             idx  = rng.choice(len(flat), size=num_rgb_sample, replace=False)
             flat = flat[idx]
         self.flat_pixels = flat  # (N, 3)
-
-        # ── image_square: ImageNet-normalised, (3, H, W) ──────────────────
-        # JAX: image_square is (224,224,3) channels-last
-        # PyTorch ResNet expects (3,224,224) channels-first
         sq  = self.image.resize((square_size, square_size), Image.LANCZOS)
         sq  = np.array(sq, dtype=np.float32) / 255.0          # (H, W, 3)
         sq  = (sq - IMAGENET_MEAN) / IMAGENET_STD              # ImageNet normalise
         self.image_square = sq.transpose(2, 0, 1)              # (3, H, W) float32
 
     def sample_pixels(self, n: int, rng=None) -> np.ndarray:
-        """Sample n random pixels. Returns (n, 3) float32."""
         if rng is not None:
             idx = rng.integers(0, len(self.flat_pixels), size=n)
         else:
