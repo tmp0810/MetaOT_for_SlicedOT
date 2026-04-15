@@ -19,19 +19,9 @@ def setup(
     master_port: str = "12355",
     backend: str = "nccl",
 ):
-    """Initialize the distributed environment.
-
-    Args:
-        rank: Rank of the current process.
-        total_num_gpus: Number of GPUs used in the job.
-        master_addr: IP address of the master node.
-        master_port: Port number of the master node.
-        backend: Backend to use.
-    """
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["MASTER_PORT"] = master_port
 
-    # initialize the process group
     dist.init_process_group(
         backend=backend,
         rank=rank,
@@ -40,24 +30,10 @@ def setup(
 
 
 def generate_samples(model, parallel, savedir, step, net_="normal"):
-    """Save 64 generated images (8 x 8) for sanity check along training.
-
-    Parameters
-    ----------
-    model:
-        represents the neural network that we want to generate samples from
-    parallel: bool
-        represents the parallel training flag. Torchdyn only runs on 1 GPU, we need to send the models from several GPUs to 1 GPU.
-    savedir: str
-        represents the path where we want to save the generated images
-    step: int
-        represents the current step of training
-    """
     model.eval()
 
     model_ = copy.deepcopy(model)
     if parallel:
-        # Send the models from GPU to CPU for inference with NeuralODE from Torchdyn
         model_ = model_.module.to(device)
 
     node_ = NeuralODE(model_, solver="euler", sensitivity="adjoint")
