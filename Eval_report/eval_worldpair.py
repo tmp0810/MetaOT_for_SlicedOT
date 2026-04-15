@@ -15,7 +15,7 @@ from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import (
 
 POOL_SEED   = 0
 POOL_SIZE   = 1000
-TRAIN_RATIO = 0.7   # 490 train / 210 test
+TRAIN_RATIO = 0.7 
 
 
 def sinkhorn_gt(a, b, C, eps, n_iter=500):
@@ -35,7 +35,6 @@ def sample_pair(n_supply, n_demand, seed):
 
 
 def evaluate(predict_fn, test_pairs, C, eps, name):
-    # Warmup: eliminate CUDA cold-start outlier from timing
     if test_pairs:
         try: predict_fn(*test_pairs[0])
         except Exception: pass
@@ -118,9 +117,8 @@ def main():
     C   = _sphere_cost(supply_euc, demand_euc)
     eps = 0.5
 
-    # ── Pre-sample pool ONCE, split 70/30, shared by ALL methods ──────────
-    n_train_pool = int(POOL_SIZE * TRAIN_RATIO)   # 490
-    n_test_pool  = POOL_SIZE - n_train_pool        # 210
+    n_train_pool = int(POOL_SIZE * TRAIN_RATIO)   
+    n_test_pool  = POOL_SIZE - n_train_pool      
 
     assert args.M <= n_train_pool, \
         f"M={args.M} exceeds train pool size {n_train_pool}"
@@ -128,10 +126,6 @@ def main():
         f"N={args.N} exceeds test pool size {n_test_pool}"
 
     print(f"\nPre-sampling pool of {POOL_SIZE} pairs (seed={POOL_SEED}) ...")
-    # Mỗi pair dùng seed = POOL_SEED + i để đảm bảo reproducible
-    # Train pool: index 0..489   → seed POOL_SEED + 0  .. POOL_SEED + 489
-    # Test pool:  index 490..699 → seed POOL_SEED + 490 .. POOL_SEED + 699
-    # → không bao giờ overlap về seed
     pool = [sample_pair(args.n_supply, args.n_demand, POOL_SEED + i)
             for i in range(POOL_SIZE)]
 
@@ -145,7 +139,6 @@ def main():
     print(f"  Using M={args.M} train pairs  |  N={args.N} test pairs")
     print(f"  → All 4 methods will use EXACTLY these same pairs.\n")
 
-    # Save test pairs for plot scripts
     test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
     os.makedirs(os.path.dirname(test_pairs_path), exist_ok=True)
     with open(test_pairs_path, "wb") as _f:
@@ -159,7 +152,6 @@ def main():
 
     results = []
 
-    # ── 1. OT Regression Sliced World ─────────────────────────────────────
     print("\n[1/4] OT Regression Sliced World (Method 1) ...")
     cfg1 = init_cfg("OT_Regression_Sliced_World")
     cfg1["num_bootstrap"] = args.M; cfg1["epsilon"] = eps
@@ -176,7 +168,6 @@ def main():
     results.append(("OT Regression (M1)", rmse1, tinf1, t1))
     print(f"  Train: {t1:.1f}s  RMSE: {rmse1.mean():.2e}")
 
-    # ── 2. OT Objective Sliced World ──────────────────────────────────────
     print("\n[2/4] OT Objective Sliced World (Method 2) ...")
     from Solvers.Objective_SlicedOT.OT_Objective_Sliced_World import OT_Objective_Sliced_World
     cfg2 = init_cfg("OT_Objective_Sliced_World")
@@ -194,7 +185,6 @@ def main():
     results.append(("OT Objective (M2)", rmse2, tinf2, t2))
     print(f"  Train: {t2:.1f}s  RMSE: {rmse2.mean():.2e}")
 
-    # ── 3. Meta OT World ──────────────────────────────────────────────────
     print("\n[3/4] Meta OT World (baseline) ...")
     from Solvers.Meta_OT.Meta_OT_World import Meta_OT_World
     cfg3 = init_cfg("Meta_OT_World")
@@ -210,7 +200,6 @@ def main():
     results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
     print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
-    # ── 4. min-SWGG World ─────────────────────────────────────────────────
     print("\n[4/4] min-SWGG World (baseline, no training) ...")
     from Solvers.SWGG.min_SWGG_World import min_SWGG_World
     cfg4 = init_cfg("min_SWGG_World")
@@ -223,7 +212,6 @@ def main():
     results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
     print(f"  RMSE: {rmse4.mean():.2e}")
 
-    # ── 5. Min-STP World ──────────────────────────────────────────────────
     print("\n[5/5] Min-STP World (baseline) ...")
     from Solvers.MinSTP.Min_STP_World import Min_STP_World
     cfg3 = init_cfg("Min_STP_World")
