@@ -21,10 +21,8 @@ from torchcfm.conditional_flow_matching import (
 )
 from torchcfm.models.unet.unet import UNetModelWrapper
 
-# ── Our amortised solvers ────────────────────────────────────────────────────
 from CIFAR10_OT_CFM.RA_OT_CIFAR import AmortizedRA_OT_CIFAR
 from CIFAR10_OT_CFM.OA_OT_CIFAR import AmortizedOA_OT_CIFAR
-# ─────────────────────────────────────────────────────────────────────────────
 
 FLAGS = flags.FLAGS
 
@@ -52,14 +50,12 @@ flags.DEFINE_integer(
     help="frequency of saving checkpoints, 0 to disable during training",
 )
 
-# ── Amortised OT pre-training hyper-parameters ──────────────────────────────
 flags.DEFINE_integer("pretrain_M", 50,  help="number of mini-batches for OT pre-training (RA/OA-OT)")
 flags.DEFINE_integer("pretrain_L", 100, help="number of random projections for sliced OT (RA/OA-OT)")
 flags.DEFINE_integer("pretrain_T", 5000, help="optimisation steps for OA-OT dual objective")
 flags.DEFINE_float("pretrain_eps", 0.1, help="Sinkhorn regularisation for RA/OA-OT")
 flags.DEFINE_float("pretrain_ridge", 1e-3, help="ridge penalty for RA-OT regression")
 flags.DEFINE_float("pretrain_lr", 1e-3, help="Adam learning rate for OA-OT optimisation")
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 use_cuda = torch.cuda.is_available()
@@ -124,19 +120,13 @@ def train(argv):
         net_model = torch.nn.DataParallel(net_model)
         ema_model = torch.nn.DataParallel(ema_model)
 
-    # show model size
     model_size = 0
     for param in net_model.parameters():
         model_size += param.data.nelement()
     print("Model params: %.2f M" % (model_size / 1024 / 1024))
 
-    #################################
-    #       Flow Matching Setup
-    #################################
-
     sigma = 0.0
 
-    # ── Amortised OT models (two-phase protocol) ─────────────────────────────
     amortized_solver = None      # will be set for ra-ot / oa-ot
     pretrain_time    = 0.0
 
@@ -152,7 +142,6 @@ def train(argv):
     elif FLAGS.model == "si":
         FM = VariancePreservingConditionalFlowMatcher(sigma=sigma)
 
-    # ── RA-OT ─────────────────────────────────────────────────────────────────
     elif FLAGS.model == "ra-ot":
         FM = ConditionalFlowMatcher(sigma=sigma)   # same path/flow as I-CFM
         ot_device = "cuda" if use_cuda else "cpu"
@@ -163,8 +152,6 @@ def train(argv):
             ridge=FLAGS.pretrain_ridge,
             device=ot_device,
         )
-
-        # ---- helper samplers ------------------------------------------------
         pretrain_loader = torch.utils.data.DataLoader(
             dataset, batch_size=FLAGS.batch_size, shuffle=True,
             num_workers=FLAGS.num_workers, drop_last=True,
@@ -176,7 +163,6 @@ def train(argv):
 
         def source_sampler(x1):
             return torch.randn_like(x1)
-        # ---------------------------------------------------------------------
 
         print("\n" + "="*60)
         print("  PHASE 1 — RA-OT Pre-training")
@@ -192,7 +178,6 @@ def train(argv):
         print(f"  RA-OT pre-training done in {pretrain_time:.2f}s")
         print("="*60 + "\n")
 
-    # ── OA-OT ─────────────────────────────────────────────────────────────────
     elif FLAGS.model == "oa-ot":
         FM = ConditionalFlowMatcher(sigma=sigma)   # same path/flow as I-CFM
         ot_device = "cuda" if use_cuda else "cpu"
@@ -204,7 +189,6 @@ def train(argv):
             device=ot_device,
         )
 
-        # ---- helper samplers ------------------------------------------------
         pretrain_loader = torch.utils.data.DataLoader(
             dataset, batch_size=FLAGS.batch_size, shuffle=True,
             num_workers=FLAGS.num_workers, drop_last=True,
@@ -216,7 +200,6 @@ def train(argv):
 
         def source_sampler(x1):
             return torch.randn_like(x1)
-        # ---------------------------------------------------------------------
 
         print("\n" + "="*60)
         print("  PHASE 1 — OA-OT Pre-training")
@@ -242,10 +225,6 @@ def train(argv):
     savedir = FLAGS.output_dir + FLAGS.model + "/"
     os.makedirs(savedir, exist_ok=True)
 
-    #################################
-    #   PHASE 2 — U-Net Training
-    #################################
-
     print("\n" + "="*60)
     print(f"  PHASE 2 — U-Net Flow Matching Training  [{FLAGS.model.upper()}]")
     print("="*60)
@@ -257,14 +236,11 @@ def train(argv):
             x1 = next(datalooper).to(device)
             x0 = torch.randn_like(x1)
 
-            # ── OT coupling ──────────────────────────────────────────────────
             if amortized_solver is not None:
                 # RA-OT / OA-OT: replace exact EMD with amortised plan
                 x0, x1 = amortized_solver.sample_pairs(x0, x1)
                 x0 = x0.to(device)
                 x1 = x1.to(device)
-            # baseline methods handle coupling inside FM.sample_location_and_conditional_flow
-            # ─────────────────────────────────────────────────────────────────
 
             t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
             vt = net_model(t, xt)
@@ -277,7 +253,6 @@ def train(argv):
 
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-            # sample and Saving the weights
             if FLAGS.save_step > 0 and step % FLAGS.save_step == 0:
                 generate_samples(net_model, FLAGS.parallel, savedir, step, net_="normal")
                 generate_samples(ema_model, FLAGS.parallel, savedir, step, net_="ema")
@@ -302,7 +277,6 @@ def train(argv):
     print(f"  Total time        : {total_time/3600:.4f} h  ({total_time:.1f} s)")
     print("="*60 + "\n")
 
-    # Save timing report
     report_path = savedir + f"{FLAGS.model}_timing_report.txt"
     with open(report_path, "w") as f:
         f.write(f"Model: {FLAGS.model}\n")
