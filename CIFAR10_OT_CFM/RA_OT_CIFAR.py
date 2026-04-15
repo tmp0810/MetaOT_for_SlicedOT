@@ -29,7 +29,7 @@ class AmortizedRA_OT_CIFAR:
         self.eps = eps
         self.ridge = ridge
         self.device = device
-        self.dim = 3 * 32 * 32          # CIFAR-10 flattened dimension
+        self.dim = 3 * 32 * 32       
 
         self.proj_dirs = generate_uniform_unit_sphere_projections(
             dim=self.dim,
@@ -42,19 +42,13 @@ class AmortizedRA_OT_CIFAR:
         self.pretrain_time = 0.0
                      
     def _flatten_f32(self, x: torch.Tensor) -> torch.Tensor:
-        """(B, C, H, W) -> (B, D) float32 on self.device (fast inference)."""
         return x.reshape(x.shape[0], -1).to(dtype=torch.float32, device=self.device)
 
     def _flatten(self, x: torch.Tensor) -> torch.Tensor:
-        """(B, C, H, W) -> (B, D) in float64 (kept for pretrain)."""
         return x.reshape(x.shape[0], -1).to(dtype=torch.float64, device=self.device)
 
     def _compute_sliced_potentials(self, x0_flat: torch.Tensor,
                                    x1_flat: torch.Tensor) -> torch.Tensor:
-        """Compute sliced OT dual potentials Phi (B, L).
-        x0_flat / x1_flat: float64 on self.device (used during pretrain).
-        emd1D_dual is CPU-only → we move projected coords to CPU first.
-        """
         B = x0_flat.shape[0]
 
         proj_x0 = (x0_flat @ self.proj_dirs.T).T.cpu()   # (L, B) on CPU
@@ -154,46 +148,37 @@ class AmortizedRA_OT_CIFAR:
         B   = x0.shape[0]
         dev = x0.device
 
-        # ── 1. Flatten to float32 on device ────────────────────────────────
         x0_flat = x0.reshape(B, -1).to(dtype=torch.float32, device=dev)  # (B, D)
         x1_flat = x1.reshape(B, -1).to(dtype=torch.float32, device=dev)  # (B, D)
 
-        # ── 2. Sliced potentials (only emd1D_dual runs on CPU / float64) ───
-        # proj_dirs kept in original dtype (float64); cast to float32 for matmul
         proj_f32 = self.proj_dirs.to(dtype=torch.float32, device=dev)     # (L, D)
-        Phi = self._compute_sliced_potentials_f32(x0_flat, x1_flat)       # (B, L) CPU f32
+        Phi = self._compute_sliced_potentials_f32(x0_flat, x1_flat)       
 
-        # ── 3. Amortised f prediction (fast linear map) ─────────────────────
         alpha_t = torch.tensor(self.alpha, dtype=torch.float32)           # (L,) CPU
-        f = (Phi @ alpha_t).to(device=dev)                                # (B,) GPU f32
+        f = (Phi @ alpha_t).to(device=dev)                                
         f = f - f.mean()
 
-        # ── 4. Cost matrix on GPU float32 ────────────────────────────────
-        C   = torch.cdist(x0_flat, x1_flat).pow(2)  # (B, B) GPU float32
-        eps = self.eps                               # fixed eps (no median needed)
+        C   = torch.cdist(x0_flat, x1_flat).pow(2)  
+        eps = self.eps                              
 
-        # ── 5. Sinkhorn refinement — all torch ops on GPU ───────────────────
         log_K   = -C / eps                           # (B, B)
         log_uni = float(np.log(1.0 / B))
 
-        # Forward pass: f → g
         M_f   = f.unsqueeze(1) / eps + log_K        # (B, B)
         m     = M_f.max(dim=0, keepdim=True).values
         log_g = log_uni - ((M_f - m).exp().sum(dim=0).log() + m.squeeze(0))
 
-        # Backward pass: g → f
         M_g   = log_g.unsqueeze(0) + log_K          # (B, B)
         m     = M_g.max(dim=1, keepdim=True).values
         log_f = log_uni - ((M_g - m).exp().sum(dim=1).log() + m.squeeze(1))
 
-        # ── 6. Build plan (stay on GPU) ────────────────────────────────────
         log_P = log_f.unsqueeze(1) + log_g.unsqueeze(0) + log_K  # (B, B)
         log_P = log_P - log_P.max()
         P = log_P.exp().clamp(min=0.0)
         P = P / (P.sum(dim=1, keepdim=True) + 1e-30)
         P = P / (P.sum(dim=0, keepdim=True) + 1e-30)
 
-        return P   # (B, B) float32 on GPU — no .numpy() copy!
+        return P   
 
     def sample_pairs(self, x0: torch.Tensor, x1: torch.Tensor,
                      cpu_ot: bool = False):
@@ -208,9 +193,8 @@ class AmortizedRA_OT_CIFAR:
             x0c, x1c = x0.cpu(), x1.cpu()
             return x0c[idx // B].to(dev), x1c[idx % B].to(dev)
 
-        # ── default: GPU path (original behaviour) ────────────────────────
-        P      = self.predict_plan(x0, x1)            # (B, B) GPU float32
-        P_flat = P.reshape(-1)                         # (B*B,)
+        P      = self.predict_plan(x0, x1)          
+        P_flat = P.reshape(-1)                     
         P_flat = (P_flat / (P_flat.sum() + 1e-30)).float()
         idx = torch.multinomial(P_flat, num_samples=B, replacement=True)
         return x0[idx // B], x1[idx % B]
@@ -218,14 +202,12 @@ class AmortizedRA_OT_CIFAR:
     def predict_plan_cpu(self, x0: torch.Tensor, x1: torch.Tensor) -> torch.Tensor:
         B = x0.shape[0]
 
-        # ── 1. Flatten on CPU float32 ──────────────────────────────────────
-        x0_flat = x0.reshape(B, -1).float().cpu()    # (B, D) CPU f32
-        x1_flat = x1.reshape(B, -1).float().cpu()    # (B, D) CPU f32
+        x0_flat = x0.reshape(B, -1).float().cpu()    
+        x1_flat = x1.reshape(B, -1).float().cpu()    
 
-        # ── 2. Sliced potentials — emd1D_dual is CPU-native, no transfer ──
-        proj_cpu = self.proj_dirs.float().cpu()       # (L, D) CPU f32
-        proj_x0  = (x0_flat @ proj_cpu.T).T.double() # (L, B) CPU f64
-        proj_x1  = (x1_flat @ proj_cpu.T).T.double() # (L, B) CPU f64
+        proj_cpu = self.proj_dirs.float().cpu()     
+        proj_x0  = (x0_flat @ proj_cpu.T).T.double() 
+        proj_x1  = (x1_flat @ proj_cpu.T).T.double() 
 
         uni = torch.full((B,), 1.0 / B, dtype=torch.float64)
         f_grad, _, _ = emd1D_dual(
@@ -233,19 +215,16 @@ class AmortizedRA_OT_CIFAR:
             u_weights=uni, v_weights=uni,
             p=2, require_sort=True,
         )  # (L, B) CPU f64
-        Phi = f_grad.T.float()                        # (B, L) CPU f32
+        Phi = f_grad.T.float()                  
         Phi = Phi - Phi.mean(dim=0, keepdim=True)
 
-        # ── 3. Amortised f prediction ──────────────────────────────────────
-        alpha_t = torch.tensor(self.alpha, dtype=torch.float32)   # (L,) CPU
-        f = Phi @ alpha_t                             # (B,) CPU f32
+        alpha_t = torch.tensor(self.alpha, dtype=torch.float32)  
+        f = Phi @ alpha_t                       
         f = f - f.mean()
 
-        # ── 4. Cost matrix on CPU ──────────────────────────────────────────
-        C   = torch.cdist(x0_flat, x1_flat).pow(2)   # (B, B) CPU f32
+        C   = torch.cdist(x0_flat, x1_flat).pow(2)   
         eps = self.eps
 
-        # ── 5. Sinkhorn (1 forward + 1 backward, CPU torch ops) ───────────
         log_K   = -C / eps
         log_uni = float(np.log(1.0 / B))
 
@@ -257,11 +236,10 @@ class AmortizedRA_OT_CIFAR:
         m     = M_g.max(dim=1, keepdim=True).values
         log_f = log_uni - ((M_g - m).exp().sum(dim=1).log() + m.squeeze(1))
 
-        # ── 6. Build plan (CPU) ────────────────────────────────────────────
         log_P = log_f.unsqueeze(1) + log_g.unsqueeze(0) + log_K
         log_P = log_P - log_P.max()
         P = log_P.exp().clamp(min=0.)
         P = P / (P.sum(dim=1, keepdim=True) + 1e-30)
         P = P / (P.sum(dim=0, keepdim=True) + 1e-30)
 
-        return P   # (B, B) CPU float32 — no GPU memory used!
+        return P   
