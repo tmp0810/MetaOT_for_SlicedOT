@@ -17,8 +17,8 @@ from Data.color_transfer_data import get_color_transfer_dataloader
 
 POOL_SEED   = 0
 POOL_SIZE   = 1000
-TRAIN_RATIO = 0.7   # 490 train / 210 test
-EPS         = 0.005  # RGB space [0,1]^3: small distances → need small eps for sharp plans
+TRAIN_RATIO = 0.7   
+EPS         = 0.005  
 
 
 def quantize_image(img_path, n_clusters=500, seed=0):
@@ -36,29 +36,19 @@ def quantize_image(img_path, n_clusters=500, seed=0):
 
 
 def build_pool(image_paths, n_clusters, pool_size, seed):
-    """
-    Gen toàn bộ unordered pairs C(N_img, 2), shuffle với seed cố định,
-    lấy pool_size pairs đầu. Cache quantization để tránh re-compute.
-    Trả về list of (sw, sc, sl, src_img, tw, tc, tgt_img, pi, pj).
-    """
-    # Tạo tất cả unordered pairs (i < j)
     n = len(image_paths)
     all_pairs_idx = [(i, j) for i in range(n) for j in range(i+1, n)]
 
-    # Shuffle với seed cố định
     rng = np.random.default_rng(seed)
     order = rng.permutation(len(all_pairs_idx))
     all_pairs_idx = [all_pairs_idx[k] for k in order]
 
-    # Lấy pool_size pairs đầu (sau shuffle)
     needed = min(pool_size, len(all_pairs_idx))
     assert needed == pool_size, (
         f"Không đủ pairs: cần {pool_size} nhưng chỉ có C({n},2)={len(all_pairs_idx)} pairs. "
         f"Cần ít nhất {int(np.ceil((1 + np.sqrt(1 + 8*pool_size)) / 2))} ảnh."
     )
     selected = all_pairs_idx[:pool_size]
-
-    # Quantize từng ảnh cần dùng (cache)
     needed_imgs = set()
     for i, j in selected:
         needed_imgs.add(i); needed_imgs.add(j)
@@ -68,8 +58,6 @@ def build_pool(image_paths, n_clusters, pool_size, seed):
     for idx in tqdm(sorted(needed_imgs), desc="  Quantize", leave=False):
         img, w, c, lbl = quantize_image(image_paths[idx], n_clusters, seed=0)
         cache[idx] = (img, w, c, lbl)
-
-    # Build pool list với đầy đủ thông tin
     pool = []
     for i, j in selected:
         src_img, sw, sc, sl = cache[i]
@@ -81,10 +69,6 @@ def build_pool(image_paths, n_clusters, pool_size, seed):
 
 
 def pool_to_train_loader(train_pool):
-    """
-    Chuyển train pool (list of full tuples) thành DataLoader.
-    Chỉ dùng (sw, sc, tw, tc) — bỏ labels và ảnh gốc không cần cho training.
-    """
     class _DS(Dataset):
         def __init__(self, data): self.data = data
         def __len__(self): return len(self.data)
@@ -97,8 +81,6 @@ def pool_to_train_loader(train_pool):
     return DataLoader(_DS(train_pool), batch_size=1, shuffle=False)
 
 
-# ── evaluation ────────────────────────────────────────────────────────────────
-
 def sinkhorn_gt(a, b, C, eps, n_iter=1000):
     a_s = np.clip(a, 1e-10, None); a_s /= a_s.sum()
     b_s = np.clip(b, 1e-10, None); b_s /= b_s.sum()
@@ -106,7 +88,6 @@ def sinkhorn_gt(a, b, C, eps, n_iter=1000):
 
 
 def evaluate_color(predict_fn, test_pairs, eps, name):
-    # Warmup: eliminate CUDA cold-start outlier from timing
     if test_pairs:
         try:
             sw, sc, _sl, _si, tw, tc, _ti, *_ = test_pairs[0]
@@ -165,8 +146,6 @@ def make_cfg_proj(solver, seed, gpu, flag_time):
                               data_name="color_transfer", gpu=gpu)
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
-
 def main():
     args = parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -179,9 +158,8 @@ def main():
     assert len(image_paths) >= 2
     print(f"Found {len(image_paths)} images.")
 
-    # ── Build pool ONCE, split 70/30, shared by ALL methods ───────────────
-    n_train_pool = int(POOL_SIZE * TRAIN_RATIO)   # 490
-    n_test_pool  = POOL_SIZE - n_train_pool        # 210
+    n_train_pool = int(POOL_SIZE * TRAIN_RATIO)  
+    n_test_pool  = POOL_SIZE - n_train_pool        
 
     assert args.M <= n_train_pool, \
         f"M={args.M} exceeds train pool size {n_train_pool}"
@@ -193,17 +171,16 @@ def main():
           f"C({len(image_paths)},2) = {len(image_paths)*(len(image_paths)-1)//2} total")
     pool = build_pool(image_paths, args.n_clusters, POOL_SIZE, POOL_SEED)
 
-    train_pool = pool[:n_train_pool]   # first 490 — train
-    test_pool  = pool[n_train_pool:]   # last  210 — test, image pairs never in train
+    train_pool = pool[:n_train_pool]   
+    test_pool  = pool[n_train_pool:]
 
-    train_pairs = train_pool[:args.M]  # first M of train pool (nested)
-    test_pairs  = test_pool[:args.N]   # first N of test pool (fixed across all M)
+    train_pairs = train_pool[:args.M]  
+    test_pairs  = test_pool[:args.N]   
 
     print(f"  Pool: {POOL_SIZE}  →  train pool: {n_train_pool}  |  test pool: {n_test_pool}")
     print(f"  Using M={args.M} train pairs  |  N={args.N} test pairs")
     print(f"  → All 4 methods will use EXACTLY these same pairs.\n")
 
-    # Save test pairs for plot scripts (format giữ nguyên như cũ)
     test_pairs_path = os.path.join(args.out, f"M{args.M}", "test_pairs.pkl")
     with open(test_pairs_path, "wb") as f:
         pickle.dump(test_pairs, f)
@@ -214,7 +191,6 @@ def main():
 
     results = []
 
-    # ── 1. OT Regression Sliced Color ─────────────────────────────────────
     print("[1/4] OT Regression Sliced Color (Method 1) ...")
     from Solvers.Regression_SlicedOT.OT_Regression_Sliced_Color import OT_Regression_Sliced_Color
     cfg1 = init_cfg("OT_Regression_Sliced_Color")
@@ -231,7 +207,6 @@ def main():
     results.append(("OT Regression (M1)", rmse1, tinf1, t1))
     print(f"  Train: {t1:.1f}s  RMSE: {rmse1.mean():.2e}")
 
-    # ── 2. OT Objective Sliced Color ──────────────────────────────────────
     print("\n[2/4] OT Objective Sliced Color (Method 2) ...")
     from Solvers.Objective_SlicedOT.OT_Objective_Sliced_Color import OT_Objective_Sliced_Color
     cfg2 = init_cfg("OT_Objective_Sliced_Color")
@@ -247,7 +222,6 @@ def main():
     results.append(("OT Objective (M2)", rmse2, tinf2, t2))
     print(f"  Train: {t2:.1f}s  RMSE: {rmse2.mean():.2e}")
 
-    # ── 3. Meta OT Color ──────────────────────────────────────────────────
     print("\n[3/4] Meta OT Color Discrete (baseline) ...")
     from Solvers.Meta_OT.Meta_OT_Color import Meta_OT_Color
     cfg3 = init_cfg("Meta_OT_Color")
@@ -262,7 +236,6 @@ def main():
     results.append(("Meta OT (baseline)", rmse3, tinf3, t3))
     print(f"  Train: {t3:.1f}s  RMSE: {rmse3.mean():.2e}")
 
-    # ── 4. min-SWGG Color ─────────────────────────────────────────────────
     print("\n[4/4] min-SWGG Color (baseline, no training) ...")
     from Solvers.SWGG.min_SWGG_Color import min_SWGG_Color
     cfg4 = init_cfg("min_SWGG_Color")
@@ -274,7 +247,6 @@ def main():
     results.append(("min-SWGG (baseline)", rmse4, tinf4, 0.0))
     print(f"  RMSE: {rmse4.mean():.2e}")
 
-    # ── 5. Min-STP Color ──────────────────────────────────────────────────
     print("\n[5/5] Min-STP Color (baseline) ...")
     from Solvers.MinSTP.Min_STP_Color import Min_STP_Color
     cfg3 = init_cfg("Min_STP_Color")
