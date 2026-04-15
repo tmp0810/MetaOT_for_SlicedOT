@@ -83,7 +83,6 @@ class AmortizedOA_OT:
         print(f"[OA-OT] Pre-training  M={M}  B={B}  T={T}  L={self.L}  eps={self.eps}")
         dev = self.device
 
-        # ---- collect training data ----
         pool_Phi, pool_a, pool_b, pool_logK = [], [], [], []
         eps_samples = []
         for _ in tqdm(range(M), desc="OA-OT collect"):
@@ -99,7 +98,6 @@ class AmortizedOA_OT:
             pool_logK.append(-C / eps)
         self._eps_scale = float(np.median(eps_samples))
 
-        # ---- optimise α ----
         alpha = nn.Parameter(torch.zeros(self.L, dtype=torch.float64, device=dev))
         opt   = torch.optim.Adam([alpha], lr=self.lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=T, eta_min=self.lr*0.01)
