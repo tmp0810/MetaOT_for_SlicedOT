@@ -61,15 +61,12 @@ class ColorTransferDataset(Dataset):
         n = len(self.image_paths)
         assert n >= 2, f"Need >= 2 images in {image_dir}, found {n}"
 
-        # Pre-quantize all images and cache (weights, centroids only — no labels)
         print(f"  Quantizing {n} images ({n_clusters} clusters each) ...")
         self._cache = {}
         for p in self.image_paths:
             w, c, _, _ = load_and_quantize(p, n_clusters, seed, max_img_size)
             self._cache[p] = (w, c)
         print(f"  Quantization done.")
-
-        # Build ordered pair list
         self.pairs = [(i, j) for i in range(n) for j in range(n) if i != j]
         if max_pairs is not None and max_pairs < len(self.pairs):
             rng = np.random.default_rng(seed)
@@ -99,7 +96,6 @@ def get_color_transfer_dataloader(
     max_pairs: int = None,
     num_workers: int = 0,
 ) -> DataLoader:
-    """Build a DataLoader for color transfer training."""
     dataset = ColorTransferDataset(
         image_dir, n_clusters, seed, max_pairs,
     )
