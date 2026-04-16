@@ -56,10 +56,6 @@ def load_world_locations(
         rng      = np.random.default_rng(rng_seed)
         idxs     = rng.choice(len(p), p=p, size=num_samples)
         row, col = np.divmod(idxs, P.shape[1])
-
-        #theta = (1.0 - row / P.shape[0]) * np.pi       # colatitude [0, π]
-
-        # Sửa
         theta = (row / P.shape[0]) * np.pi
         phi   = (col / P.shape[1]) * 2 * np.pi - np.pi # longitude  [-π, π]
 
@@ -98,14 +94,12 @@ class WorldPairDataset(IterableDataset):
 
         count = 0
         while self.num_pairs is None or count < self.num_pairs:
-            # Supply: bernoulli mask + random weights
             mask     = rng.binomial(1, self.supply_bernoulli_p, self.n_supply).astype(np.float64)
             supply_w = mask * rng.uniform(0.0, 1.0, self.n_supply)
             if supply_w.sum() < 1e-12:          # edge case: all masked out
                 supply_w = np.ones(self.n_supply, dtype=np.float64)
             supply_w /= supply_w.sum()
 
-            # Demand: uniform weights
             demand_w  = rng.uniform(0.0, 1.0, self.n_demand).astype(np.float64)
             demand_w /= demand_w.sum()
 
