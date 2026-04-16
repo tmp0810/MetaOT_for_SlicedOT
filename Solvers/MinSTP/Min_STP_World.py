@@ -6,6 +6,10 @@ import torch.nn as nn
 from tqdm import tqdm
 
 from Solvers.DefenseTrain import Defense_Train_Base
+from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import (
+    _epsilon_projection,
+    _get_stereo_proj_torch,
+)
 
 
 class _SoftTopK(torch.autograd.Function):
@@ -110,16 +114,17 @@ class SlicerNetWorld(nn.Module):
             nn.Linear(hidden_dim, context_dim, dtype=torch.float64),
             nn.Tanh(),
         )
+        # Output dim = 2 : direction on the 2-D stereographic plane
         self.head = nn.Sequential(
             nn.Linear(context_dim * 2, hidden_dim, dtype=torch.float64),
             nn.Tanh(),
-            nn.Linear(hidden_dim, 3, dtype=torch.float64),
+            nn.Linear(hidden_dim, 2, dtype=torch.float64),
         )
 
     def forward(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         za    = self.enc_a(a)
         zb    = self.enc_b(b)
-        theta = self.head(torch.cat([za, zb]))
+        theta = self.head(torch.cat([za, zb]))   # (2,)
         return theta / theta.norm().clamp(min=1e-8)
 
 
@@ -161,11 +166,21 @@ class Min_STP_World(Defense_Train_Base):
         from Solvers.Regression_SlicedOT.OT_Regression_Sliced_World import _sphere_cost
         self.C_np = _sphere_cost(self.supply_euc, self.demand_euc)
         self.C_t  = torch.tensor(self.C_np, dtype=torch.float64).to(self.device)
-        self.supply_t = torch.tensor(self.supply_euc, dtype=torch.float64).to(self.device)
-        self.demand_t = torch.tensor(self.demand_euc, dtype=torch.float64).to(self.device)
+
+        supply_t = torch.tensor(self.supply_euc, dtype=torch.float64)
+        demand_t = torch.tensor(self.demand_euc, dtype=torch.float64)
+        supply_t = _epsilon_projection(supply_t)
+        demand_t = _epsilon_projection(demand_t)
+        stereo_s = _get_stereo_proj_torch(supply_t)   # (n_supply, 2)
+        stereo_d = _get_stereo_proj_torch(demand_t)   # (n_demand, 2)
+        stereo_s = torch.nan_to_num(stereo_s, nan=0.0, posinf=0.0, neginf=0.0)
+        stereo_d = torch.nan_to_num(stereo_d, nan=0.0, posinf=0.0, neginf=0.0)
+        self.supply_t = stereo_s.to(self.device)   # (n_supply, 2)
+        self.demand_t = stereo_d.to(self.device)   # (n_demand, 2)
         self.logger.info(
             f"[Min_STP_World] n_supply={self.n_supply}  n_demand={self.n_demand}  "
-            f"C=[{self.C_np.min():.4f},{self.C_np.max():.4f}]")
+            f"C=[{self.C_np.min():.4f},{self.C_np.max():.4f}]  "
+            f"stereo_supply=[{stereo_s.min():.2f},{stereo_s.max():.2f}]")
 
     def _build_slicer(self):
         cfg         = self.cfg_m
