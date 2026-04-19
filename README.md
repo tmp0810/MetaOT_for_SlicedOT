@@ -180,7 +180,7 @@ python3 CIFAR10_OT_CFM/finetune_cifar10.py \
     --accum_steps 8 --finetune_epochs 10 --warmup 100
 ```
 
-**RA-OT** (Regression-Amortized OT — Phase 1: M=50 batches, L=100 projections):
+**RA-OT** (Regression-Amortized OT):
 ```bash
 python3 CIFAR10_OT_CFM/finetune_cifar10.py \
     --model "ra-ot" \
@@ -192,7 +192,7 @@ python3 CIFAR10_OT_CFM/finetune_cifar10.py \
     --pretrain_eps 750 --pretrain_ridge 1e-3
 ```
 
-**OA-OT** (Objective-Amortized OT — Phase 1: M=50 batches, L=100 projections, T=5000 steps):
+**OA-OT** (Objective-Amortized OT):
 ```bash
 python3 CIFAR10_OT_CFM/finetune_cifar10.py \
     --model "oa-ot" \
