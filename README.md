@@ -1,10 +1,9 @@
 # Amortized Optimal Transport from Sliced Potentials
 
 This repository contains the source code, built on
-[PyTorch]
-[POT (Python Optimal Transport)],
+PyTorch and POT,
 to reproduce the experiments for our paper
-[**Amortized Optimal Transport from Sliced Potentials**].
+**Amortized Optimal Transport from Sliced Potentials**.
 
 We propose an amortized method to predict optimal transport (OT) plans using Kantorovich potentials from sliced OT. We introduce two strategies: **RA-OT**, which learns a regression from sliced to full OT potentials via least squares, and **OA-OT**, which directly optimizes the Kantorovich dual objective. In both cases, OT plans are recovered from the estimated potentials. By reusing learned information, these methods efficiently solve repeated OT problems, remain agnostic to measure structure, and achieve strong performance across tasks such as MNIST transport, color transfer, spherical transport, and mini-batch OT flow matching.
 
