@@ -154,9 +154,7 @@ a short OT pre-training phase followed by U-Net fine-tuning.
 
 ### Step 1 — Download the pretrained I-CFM checkpoint
 
-```bash
-wget https://github.com/atong01/conditional-flow-matching/releases/download/1.0.4/cfm_cifar10_weights_step_400000.pt
-```
+Download the I-CFM model weights at 400000 iteration
 
 ### Step 2 — Fine-tune with each coupling method
 
