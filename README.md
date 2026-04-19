@@ -215,35 +215,4 @@ python3 CIFAR10_OT_CFM/compute_fid.py --model "ra-ot" --step $step --integration
 python3 CIFAR10_OT_CFM/compute_fid.py --model "oa-ot" --step $step --integration_method dopri5
 ```
 
----
 
-# Citations
-
-If you find this repository helpful for your publications,
-please consider citing our paper:
-
-```bibtex
-@misc{truong2026amortizedoptimaltransportsliced,
-      title={Amortized Optimal Transport from Sliced Potentials}, 
-      author={Minh-Phuc Truong and Khai Nguyen},
-      year={2026},
-      eprint={2604.15114},
-      archivePrefix={arXiv},
-      primaryClass={stat.ML},
-      url={https://arxiv.org/abs/2604.15114}, 
-}
-```
-
-We also build upon and compare against the following works:
-
-```bibtex
-@inproceedings{amos2023meta,
-  title={Meta Optimal Transport},
-  author={Amos, Brandon and Luise, Giulia and Cohen, Samuel and Redko, Ievgen},
-  booktitle={International Conference on Machine Learning},
-  pages={791--813},
-  year={2023},
-  organization={PMLR}
-}
-
-```
