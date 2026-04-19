@@ -76,7 +76,7 @@ python Eval_report/plot_results_grayscale.py \
 ## 2. World Pair Experiment (Spherical OT)
 
 First download the
-[2020 population density TIFF at 30-second resolution (GPWv4)](https://sedac.ciesin.columbia.edu/data/set/gpw-v4-population-density-adjusted-to-2015-unwpp-country-totals-rev11/data-download)
+2020 population density TIFF at 30-second resolution (GPWv4) 
 and save the file to `./data/Global_2015_PopulationDensity30sec_GPWv4.tiff`.
 
 **Train all methods and evaluate:**
