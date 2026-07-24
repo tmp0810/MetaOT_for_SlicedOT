@@ -16,14 +16,10 @@ from Data.multires_utils import RESOLUTIONS, make_grid, build_cost_cross, resize
 POOL_SEED = 0
 POOL_SIZE = 1000
 TRAIN_RATIO = 0.7
-CANONICAL_SIZE = 28  # Meta-OT's fixed operating resolution
+CANONICAL_SIZE = 28  
 
 
 def sample_pairs_multires(n, seed, resolutions=RESOLUTIONS, datasets_root="../datasets"):
-    """Same sampling logic as eval_grayscale.sample_pairs, but each of the
-    two images in a pair is independently resized to a resolution drawn
-    from `resolutions` (so both same-resolution and cross-resolution
-    pairs occur)."""
     np.random.seed(seed)
     dataset = MNIST(flag_train=True, cfg_m=argparse.Namespace(datasets_root=datasets_root))
     pairs, res_log = [], []
@@ -40,9 +36,6 @@ def sample_pairs_multires(n, seed, resolutions=RESOLUTIONS, datasets_root="../da
 
 
 def pairs_to_loader(pairs, batch_size=1):
-    """Identical to eval_grayscale.pairs_to_loader. batch_size MUST stay 1:
-    pairs have variable, mismatched (n_a, n_b) across different iterations,
-    which only works if every batch holds a single pair."""
     data = [(torch.zeros(1), torch.zeros(1),
              torch.tensor(a, dtype=torch.float64),
              torch.tensor(b, dtype=torch.float64))
@@ -51,7 +44,7 @@ def pairs_to_loader(pairs, batch_size=1):
 
 
 def to_canonical_pairs(pairs):
-    """Resample every (a, b) pair to the canonical 28x28 grid, for Meta-OT."""
+    #Resample every (a, b) pair to the canonical 28x28 grid, for Meta-OT
     out = []
     for a, b in pairs:
         a_c = resize_prob(a, infer_res(a), CANONICAL_SIZE)
@@ -60,9 +53,6 @@ def to_canonical_pairs(pairs):
     return out
 
 
-# ---------------------------------------------------------------------
-# Ground truth / evaluation
-# ---------------------------------------------------------------------
 _COST_CACHE = {}
 
 
@@ -80,7 +70,6 @@ def sinkhorn_gt(a, b, C, eps, n_iter=800):
 
 
 def evaluate_native(predict_fn, test_pairs, eps, name):
-    """Ground truth computed at each pair's own native (n_a, m_b)."""
     if test_pairs:
         try: predict_fn(*test_pairs[0])
         except Exception: pass
@@ -98,8 +87,7 @@ def evaluate_native(predict_fn, test_pairs, eps, name):
 
 
 def evaluate_canonical(predict_fn, test_pairs, eps, name):
-    """For Meta-OT: test_pairs are already resampled to canonical 28x28;
-    ground truth is Sinkhorn on that same canonical pair."""
+    #For Meta-OT: test_pairs are already resampled to canonical 28x28; ground truth is Sinkhorn on that same canonical pair
     C = cost_for(CANONICAL_SIZE, CANONICAL_SIZE)
     if test_pairs:
         try: predict_fn(*test_pairs[0])
@@ -140,7 +128,6 @@ def print_table(results, M, N):
 
 
 def resolution_breakdown(rmse_arr, res_log):
-    """Split RMSE into same-resolution vs cross-resolution pairs."""
     res_log = np.array(res_log)
     same_mask = res_log[:, 0] == res_log[:, 1]
     out = {}
@@ -151,9 +138,6 @@ def resolution_breakdown(rmse_arr, res_log):
     return out
 
 
-# ---------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--M", type=int, default=50)
