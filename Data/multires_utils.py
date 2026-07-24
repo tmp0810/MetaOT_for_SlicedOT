@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-# The 3 resolutions used in the W1 rebuttal experiment: n in {784, 400, 196}
 RESOLUTIONS = [28, 20, 14]
 
 
