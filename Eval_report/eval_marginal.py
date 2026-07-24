@@ -172,6 +172,7 @@ def main():
     print(f"  Test pairs saved → {test_pairs_path}")
 
     dl_train = pairs_to_loader(train_pairs, batch_size=1)
+    report_ground_truth_convergence(test_pairs, C, eps)
     results  = []
 
     print("[1/5] OT Regression Sliced (Method 1) ...")
