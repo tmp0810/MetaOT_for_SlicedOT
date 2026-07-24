@@ -43,17 +43,6 @@ def sample_pairs(n, seed):
     return pairs
 
 
-# ---------------------------------------------------------------------
-# W2: marginal-violation metric.
-#
-# A predicted plan P is only a valid transport coupling if BOTH
-# P.sum(axis=1) == a  and  P.sum(axis=0) == b.  Recovering P from a single
-# predicted potential (via one Sinkhorn-style update, as every solver here
-# does) enforces at most ONE of the two marginals exactly and leaves the
-# other only approximately satisfied. We measure both violations directly
-# on the exact P returned by predict_fn -- i.e. the plan actually reported
-# / used for RMSE -- with no extra rounding or projection applied anywhere.
-# ---------------------------------------------------------------------
 def marginal_l1(P, a, b):
     """L1 marginal violation: sum_i |P.sum(axis=1)_i - a_i| and
     sum_j |P.sum(axis=0)_j - b_j|. Same quantity Sinkhorn's own stopThr
