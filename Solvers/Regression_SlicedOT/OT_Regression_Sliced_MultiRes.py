@@ -6,7 +6,6 @@ from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Slice
 from regression_OT_utils import generate_uniform_unit_sphere_projections, emd1D_dual
 from Data.multires_utils import MultiResGridMixin, RESOLUTIONS
 
-
 class OT_Regression_Sliced_MultiRes(MultiResGridMixin, OT_Regression_Sliced):
 
     def __init__(self, cfg_proj, cfg_m):
