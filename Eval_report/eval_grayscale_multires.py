@@ -19,9 +19,6 @@ TRAIN_RATIO = 0.7
 CANONICAL_SIZE = 28  # Meta-OT's fixed operating resolution
 
 
-# ---------------------------------------------------------------------
-# Data
-# ---------------------------------------------------------------------
 def sample_pairs_multires(n, seed, resolutions=RESOLUTIONS, datasets_root="../datasets"):
     """Same sampling logic as eval_grayscale.sample_pairs, but each of the
     two images in a pair is independently resized to a resolution drawn
