@@ -1,7 +1,6 @@
 import numpy as np
 import ot
 import torch
-
 from Solvers.DefenseTrain import Defense_Train_Base
 from Solvers.Regression_SlicedOT.OT_Regression_Sliced import OT_Regression_Sliced
 from regression_OT_utils import generate_uniform_unit_sphere_projections, emd1D_dual
