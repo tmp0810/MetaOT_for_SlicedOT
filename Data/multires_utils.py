@@ -7,11 +7,7 @@ RESOLUTIONS = [28, 20, 14]
 
 
 def make_grid(img_size):
-    """Coordinate grid in [0,1]^2. Same ordering convention as
-    eval_grayscale.build_cost_grid / the solvers' original _build_grid,
-    so results stay comparable across resolutions and with the original
-    same-resolution experiment.
-    """
+    #Coordinate grid in [0,1]^2
     grid = np.array(
         [[j, i] for i in np.linspace(1, 0, num=img_size)
                 for j in np.linspace(0, 1, num=img_size)],
@@ -25,17 +21,8 @@ def build_cost_cross(grid_a, grid_b):
 
 
 def resize_prob(vec, in_size, out_size):
-    """Resize a flattened (in_size**2,) probability vector to a
-    (out_size**2,) probability vector and renormalize.
+    #Resize a flattened (in_size**2,) probability vector to a (out_size**2,) probability vector and renormalize
 
-    - Downsampling (out_size < in_size): adaptive average pooling. Bin
-      areas are not exactly equal when in_size is not a multiple of
-      out_size (e.g. 28 -> 20), so we renormalize afterwards to restore
-      a valid probability vector.
-    - Upsampling (out_size > in_size): bilinear interpolation (used only
-      to bring 20x20 / 14x14 measures back to the canonical 28x28 grid
-      required by the fixed-architecture Meta-OT baseline).
-    """
     if in_size == out_size:
         return vec.copy() if isinstance(vec, np.ndarray) else vec.clone()
 
@@ -51,10 +38,6 @@ def resize_prob(vec, in_size, out_size):
 
 
 def infer_res(vec_or_len):
-    """Infer the (square) image resolution from a flattened vector's
-    length. Works because {784, 400, 196} are all distinct perfect
-    squares, so no extra metadata needs to travel through the DataLoader.
-    """
     n = vec_or_len if isinstance(vec_or_len, (int, np.integer)) else vec_or_len.shape[-1]
     r = int(round(n ** 0.5))
     assert r * r == n, f"length {n} is not a perfect square"
@@ -62,13 +45,6 @@ def infer_res(vec_or_len):
 
 
 class MultiResGridMixin:
-    """Mixin providing per-resolution grids and per-(res_a,res_b) cost /
-    log-kernel caches. Call self._init_multires(resolutions) from inside
-    an overridden _build_grid() (i.e. AFTER Defense_Train_Base.__init__
-    has set self.device, but that isn't even required at init time since
-    _logK is cached lazily).
-    """
-
     def _init_multires(self, resolutions=RESOLUTIONS):
         self._mr_resolutions = list(resolutions)
         self._mr_grids = {r: make_grid(r) for r in self._mr_resolutions}
