@@ -21,11 +21,9 @@ class OT_Objective_Sliced_MultiRes(MultiResGridMixin, OT_Objective_Sliced):
             dim=2, num_projections=L, dtype=torch.float64, device="cpu")
         self.projection_matrix = proj.detach().numpy()
 
-    # ---- override: build per-resolution grids instead of one fixed grid ----
     def _build_grid(self):
         self._init_multires(RESOLUTIONS)
 
-    # ---- override: sliced potentials using each side's own grid ----
     def _compute_features_raw(self, a, b):
         device = self.device
         ra, rb = self._infer_res(a), self._infer_res(b)
@@ -47,7 +45,6 @@ class OT_Objective_Sliced_MultiRes(MultiResGridMixin, OT_Objective_Sliced):
         Xg = Xg - Xg.mean(axis=0, keepdims=True)
         return Xf, Xg, None
 
-    # ---- override: predict potentials with the pair's native log_K ----
     def _predict_potentials(self, a, b, alpha, beta=None):
         Xf, _, _ = self._compute_features_raw(a, b)
         f_clean = Xf @ alpha
@@ -63,7 +60,6 @@ class OT_Objective_Sliced_MultiRes(MultiResGridMixin, OT_Objective_Sliced):
             f_t = self._f_from_g(g_t, a_t, log_K, eps)
         return f_t.cpu().numpy(), g_t.cpu().numpy()
 
-    # ---- override: recover the plan with the pair's native cost matrix ----
     def _potentials_to_plan(self, a, b, f, g):
         eps = self.cfg_m.epsilon
         ra, rb = self._infer_res(a), self._infer_res(b)
@@ -79,7 +75,6 @@ class OT_Objective_Sliced_MultiRes(MultiResGridMixin, OT_Objective_Sliced):
         P = P * (b / c)[None, :]
         return np.clip(P, 0.0, None)
 
-    # ---- override: full retrain loop, each pooled pair keeps its own log_K ----
     def _fit(self, dataloader_train):
         cfg = self.cfg_m
         T = int(cfg.num_train_iter)
