@@ -134,7 +134,31 @@ def make_cfg_proj(solver, seed, gpu, flag_time):
     return argparse.Namespace(seed=seed, flag_time=flag_time,
                               flag_load=None, solver=solver,
                               data_name="MNIST", gpu=gpu)
+def report_ground_truth_convergence(test_pairs, C, eps, n_iter=800):
+    our_l1_a, our_l1_b, pot_l2_b = [], [], []
+    for a, b in tqdm(test_pairs, desc="  GT convergence check", leave=False):
+        a_s = np.clip(a, 1e-10, None); a_s /= a_s.sum()
+        b_s = np.clip(b, 1e-10, None); b_s /= b_s.sum()
+        P_gt, log_gt = ot.sinkhorn(a_s, b_s, C, reg=eps,
+                                    numItermax=n_iter, stopThr=1e-9, log=True)
+        ea, eb = marginal_l1(P_gt, a, b)
+        our_l1_a.append(ea)
+        our_l1_b.append(eb)
+        pot_l2_b.append(log_gt["err"][-1] if log_gt.get("err") else float("nan"))
 
+    our_l1_a = np.array(our_l1_a)
+    our_l1_b = np.array(our_l1_b)
+    pot_l2_b = np.array(pot_l2_b)
+
+    print("\n[Ground-truth (Sinkhorn) convergence check]")
+    print(f"  L1 marginal error, a (row) : {our_l1_a.mean():.3e} ± {our_l1_a.std():.3e}"
+          f"   <- exact by construction of the u-update, expect ~machine eps")
+    print(f"  L1 marginal error, b (col) : {our_l1_b.mean():.3e} ± {our_l1_b.std():.3e}"
+          f"   <- only marginal actually iterated on")
+    print(f"  POT internal L2 err (b)    : {pot_l2_b.mean():.3e} ± {pot_l2_b.std():.3e}"
+          f"   <- exactly what stopThr=1e-9 bounds (cross-check vs line above)\n")
+    return our_l1_a, our_l1_b, pot_l2_b
+    
 def main():
     args = parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
